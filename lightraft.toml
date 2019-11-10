@@ -1,0 +1,13 @@
+[cluster]
+name = "blah"
+
+[[nodes]]
+bindAddress = "127.0.0.1"
+bindPort = 6453
+
+[[nodes]]
+bindAddress = "127.0.0.1"
+bindPort = 3243
+
+[driver]
+name = "sqlite"

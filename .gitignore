@@ -1,2 +1,3 @@
 lightraft
 *.sqlite*
+*.pb.go
