@@ -7,7 +7,7 @@ import (
 
 	"github.com/firstrow/tcp_server"
 	"github.com/jasonrogena/lightraft/configuration"
-	"github.com/jasonrogena/lightraft/persistence"
+	"github.com/jasonrogena/lightraft/consensus/raft"
 )
 
 type consensusInterface interface {
@@ -43,28 +43,29 @@ func main() {
 
 // startListening binds to the TCP port and starts listening for client connections
 func startListening(config configuration.Config, nodeIndex int64) {
-	persistenceInterface := persistence.Init(&config, nodeIndex)
+	//persistenceInterface := persistence.Init(&config, nodeIndex)
 
 	if int64(len(config.Nodes)) > nodeIndex {
-		server := tcp_server.New(config.Nodes[nodeIndex].BindAddress + ":" + strconv.Itoa(config.Nodes[nodeIndex].BindPort))
-
-		server.OnNewClient(func(client *tcp_server.Client) {
+		raftNode := raft.NewNode(nodeIndex)
+		raftNode.GetElectionTimer()
+		tcpServer := tcp_server.New(config.Nodes[nodeIndex].BindAddress + ":" + strconv.Itoa(config.Nodes[nodeIndex].BindPort))
+		tcpServer.OnNewClient(func(client *tcp_server.Client) {
 			// new client connected
 			client.Send(ansiLogo + "Connected to node " + strconv.FormatInt(nodeIndex, 10) + "\n\n")
 		})
-		server.OnNewMessage(func(client *tcp_server.Client, message string) {
+		tcpServer.OnNewMessage(func(client *tcp_server.Client, message string) {
 			// Check if message is an update
-			if persistenceInterface.IsQueryUpdate(message) {
+			// if persistenceInterface.IsQueryUpdate(message) {
 
-			} else {
+			// } else {
 
-			}
+			// }
 		})
-		server.OnClientConnectionClosed(func(client *tcp_server.Client, err error) {
+		tcpServer.OnClientConnectionClosed(func(client *tcp_server.Client, err error) {
 			// connection with client lost
 		})
 
-		server.Listen()
+		tcpServer.Listen()
 	} else {
 		log.Printf("Number nodes %d\n", len(config.Nodes))
 		log.Fatalf("No node with index %d\n", nodeIndex)
