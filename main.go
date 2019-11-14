@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"log"
+	"net"
 	"os"
 	"strconv"
 
 	"github.com/firstrow/tcp_server"
 	"github.com/jasonrogena/lightraft/configuration"
 	"github.com/jasonrogena/lightraft/consensus/raft"
+	"google.golang.org/grpc"
 )
 
 type consensusInterface interface {
@@ -23,7 +26,7 @@ type persistenceInterface interface {
 
 func main() {
 	if len(os.Args) == 2 {
-		nodeIndex, parseErr := strconv.ParseInt(os.Args[1], 10, 64)
+		nodeIndex, parseErr := strconv.Atoi(os.Args[1])
 		if parseErr != nil {
 			log.Fatalln(parseErr)
 		}
@@ -35,41 +38,74 @@ func main() {
 		// 1. Initialize the node
 		// 2. Make sure node can talk to other nodes
 		// 3. Start listening on TCP port
-		startListening(config, nodeIndex)
+		startListening(&config, nodeIndex)
 	} else {
 		log.Fatalln(getHelp())
 	}
 }
 
 // startListening binds to the TCP port and starts listening for client connections
-func startListening(config configuration.Config, nodeIndex int64) {
+func startListening(config *configuration.Config, nodeIndex int) {
 	//persistenceInterface := persistence.Init(&config, nodeIndex)
 
-	if int64(len(config.Nodes)) > nodeIndex {
-		raftNode := raft.NewNode(nodeIndex)
-		raftNode.GetElectionTimer()
-		tcpServer := tcp_server.New(config.Nodes[nodeIndex].BindAddress + ":" + strconv.Itoa(config.Nodes[nodeIndex].BindPort))
-		tcpServer.OnNewClient(func(client *tcp_server.Client) {
-			// new client connected
-			client.Send(ansiLogo + "Connected to node " + strconv.FormatInt(nodeIndex, 10) + "\n\n")
-		})
-		tcpServer.OnNewMessage(func(client *tcp_server.Client, message string) {
-			// Check if message is an update
-			// if persistenceInterface.IsQueryUpdate(message) {
+	if len(config.Nodes) > nodeIndex {
+		// Initialize RAFT node
+		raftNode := raft.NewNode(nodeIndex, config)
 
-			// } else {
+		// Initialize the gRPC Server
+		go initGRPCServer(raftNode, nodeIndex, config)
 
-			// }
-		})
-		tcpServer.OnClientConnectionClosed(func(client *tcp_server.Client, err error) {
-			// connection with client lost
-		})
-
-		tcpServer.Listen()
+		// Initialize tcp port for clients to hook up to
+		initTCPServer(raftNode, nodeIndex, config)
 	} else {
 		log.Printf("Number nodes %d\n", len(config.Nodes))
 		log.Fatalf("No node with index %d\n", nodeIndex)
 	}
+}
+
+func initGRPCServer(raftNode *raft.Node, nodeIndex int, config *configuration.Config) {
+	// Initialize gRPC server
+	grpcListener, grpcErr := net.Listen("tcp", ":"+strconv.Itoa(config.Nodes[nodeIndex].RPCBindPort))
+	if grpcErr != nil {
+		log.Fatalf(grpcErr.Error())
+	}
+	grpcServer := grpc.NewServer(getGRPCServerUnaryInterceptor(raftNode))
+	raftNode.RegisterGRPCHandlers(grpcServer)
+
+	if err := grpcServer.Serve(grpcListener); err != nil {
+		log.Fatalf(err.Error())
+	}
+}
+
+func initTCPServer(raftNode *raft.Node, nodeIndex int, config *configuration.Config) {
+	tcpServer := tcp_server.New(config.Nodes[nodeIndex].ClientBindAddress + ":" + strconv.Itoa(config.Nodes[nodeIndex].ClientBindPort))
+	tcpServer.OnNewClient(func(client *tcp_server.Client) {
+		// new client connected
+		client.Send(ansiLogo + "Connected to node " + strconv.Itoa(nodeIndex) + "\n\n")
+	})
+	tcpServer.OnNewMessage(func(client *tcp_server.Client, message string) {
+		// Check if message is an update
+		// if persistenceInterface.IsQueryUpdate(message) {
+
+		// } else {
+
+		// }
+	})
+	tcpServer.OnClientConnectionClosed(func(client *tcp_server.Client, err error) {
+		// connection with client lost
+	})
+
+	tcpServer.Listen()
+}
+
+// getGRPCServerUnaryInterceptor injects the relevant objects (including the raftNode)
+// into the context passed into the gRPC handlers
+// You can use this function to add middlewares like authentication
+func getGRPCServerUnaryInterceptor(raftNode *raft.Node) grpc.ServerOption {
+	return grpc.UnaryInterceptor(func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {
+		ctx = context.WithValue(ctx, raft.NAME, raftNode)
+		return handler(ctx, req)
+	})
 }
 
 func getHelp() string {

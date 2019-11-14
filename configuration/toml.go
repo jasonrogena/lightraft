@@ -15,8 +15,10 @@ type Cluster struct {
 }
 
 type Node struct {
-	BindAddress string
-	BindPort    int
+	ClientBindAddress string
+	ClientBindPort    int
+	RPCBindAddress    string
+	RPCBindPort       int
 }
 
 type Driver struct {

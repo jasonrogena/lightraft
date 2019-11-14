@@ -4,8 +4,8 @@ clean:
 reqs:
 	go mod download
 
-protobufs: reqs clean
-	find . -name *.proto -print0 | xargs -I {} -0 bash -c 'protoc -I=`dirname {}` --go_out=`dirname {}` {}'
+grpcs: reqs clean
+	find . -name *.proto -print0 | xargs -I {} -0 bash -c 'protoc -I=`dirname {}` --go_out=plugins=grpc:`dirname {}` {}'
 
-build: protobufs
+build: grpcs
 	go build

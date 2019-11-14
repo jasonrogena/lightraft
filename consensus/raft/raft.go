@@ -1,10 +1,12 @@
 package raft
 
 import (
-	"errors"
 	"log"
-	"math/rand"
+	"strconv"
 	"time"
+
+	"github.com/jasonrogena/lightraft/configuration"
+	grpc "google.golang.org/grpc"
 )
 
 type State int
@@ -40,7 +42,7 @@ type Node struct {
 	// Should be saved to database before responding to RPC
 	currentTerm int64
 	votedFor    string
-	log         []string
+	// log         []string will be written directly to the metadata database
 
 	// Volatile on all nodes
 	commitIndex int64 // Index of highest log entry known to be committed. Initialized to 0
@@ -52,24 +54,41 @@ type Node struct {
 	matchIndex map[string]int64 // For each node, index of the highest log entry known to be replicated on server. Initialized to 0
 
 	// Volatile, added by me
-	state         State // Default to FOLLOWER
-	electionTimer *time.Timer
-	index         int64
+	state             State // Default to FOLLOWER
+	electionTimer     *time.Timer
+	index             int
+	candidateTermVote map[int64]string // Map of terms and IDs of candidates that this node voted for in each of the terms. ID will be nil if node hasn't voted
+	termVoteCount     map[int64]int64  // Map of terms and number of votes this node got for each of the terms
+	config            *configuration.Config
 }
+
+const NAME string = "raft-node"
 
 // NewNode should be called whenever the node is initialized
 // gets saved node data from the database and initializes ephemeral node data
-func NewNode(index int64) *Node {
+func NewNode(index int, config *configuration.Config) *Node {
 	node := new(Node)
 	// TODO: Get persistent node details from the database
 
 	// Init volatile data
 	node.index = index
+	node.config = config
 	node.commitIndex = 0
 	node.lastApplied = 0
 	node.setState(FOLLOWER)
+	node.candidateTermVote = make(map[int64]string)
+	node.termVoteCount = make(map[int64]int64)
 
 	return node
+}
+
+func (node *Node) getID() string {
+	return node.config.Cluster.Name + strconv.Itoa(node.index)
+}
+
+// RegisterGRPCHandlers adds handlers to the provided gRPC server
+func (node *Node) RegisterGRPCHandlers(grpcServer *grpc.Server) {
+	RegisterElectionServiceServer(grpcServer, &electionServer{})
 }
 
 // becomeLeader resets the node data for the leader to what is recommended when the leader is
@@ -97,10 +116,6 @@ func (node *Node) becomeCandidate() {
 // setState updates the state of the node. Function will throw an error if you try to update a
 // node's state to one it's already in
 func (node *Node) setState(newState State) error {
-	if node.state == newState {
-		return errors.New("Trying to change state of node to one it's already in")
-	}
-
 	node.state = newState
 
 	switch node.state {
@@ -115,33 +130,12 @@ func (node *Node) setState(newState State) error {
 	return nil
 }
 
-// resetElectionTimer resets the election timer which upon expiry initializes the election
-// process
-func (node *Node) resetElectionTimer() {
-	if node.electionTimer != nil {
-		node.electionTimer.Stop()
-		node.electionTimer.Reset(node.getElectionTimeoutDuration())
-	} else {
-		node.electionTimer = time.NewTimer(node.getElectionTimeoutDuration())
-	}
-
-	go node.startElection()
+func (node *Node) getLastLogIndex() (int64, error) {
+	// TODO: Implement this
+	return 0, nil
 }
 
-// startElection waits for the election timer to expire then starts the election process
-func (node *Node) startElection() {
-	// Wait for timer to expire
-	<-node.electionTimer.C
-
-	log.Printf("Election started by node %d\n", node.index)
-	node.resetElectionTimer()
-}
-
-func (node *Node) getElectionTimeoutDuration() time.Duration {
-	// TODO: Use the recommended method for determining now long timeout should be
-	return time.Duration(rand.Intn(500)) * time.Millisecond
-}
-
-func (node *Node) GetElectionTimer() *time.Timer {
-	return node.electionTimer
+func (node *Node) getLastLogTerm() (int64, error) {
+	// TODO: Implement this
+	return 0, nil
 }

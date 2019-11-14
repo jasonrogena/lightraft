@@ -2,12 +2,16 @@
 name = "blah"
 
 [[nodes]]
-bindAddress = "127.0.0.1"
-bindPort = 6453
+clientBindAddress = "127.0.0.1"
+clientBindPort = 6453
+rpcBindAddress = "127.0.0.1"
+rpcBindPort = 56453
 
 [[nodes]]
-bindAddress = "127.0.0.1"
-bindPort = 3243
+clientBindAddress = "127.0.0.1"
+clientBindPort = 6454
+rpcBindAddress = "127.0.0.1"
+rpcBindPort = 56454
 
 [driver]
 name = "sqlite"
