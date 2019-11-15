@@ -1,10 +1,14 @@
 syntax = "proto3";
 package raft;
 
+service ReplicationService {
+    rpc AppendEntries (AppendEntriesRequest) returns (AppendEntriesResponse);
+}
+
 // Is also used as a heartbeat
 message AppendEntriesRequest {
     int64 term = 1;
-    string leaderId = 2;
+    string leaderID = 2;
     int64 prevLogIndex = 3;
     int64 prevLogTerm = 4;
     repeated string entries = 5;

@@ -1,5 +1,5 @@
 [cluster]
-name = "blah"
+name = "lightraft"
 
 [[nodes]]
 clientBindAddress = "127.0.0.1"
@@ -12,6 +12,12 @@ clientBindAddress = "127.0.0.1"
 clientBindPort = 6454
 rpcBindAddress = "127.0.0.1"
 rpcBindPort = 56454
+
+[[nodes]]
+clientBindAddress = "127.0.0.1"
+clientBindPort = 6455
+rpcBindAddress = "127.0.0.1"
+rpcBindPort = 56455
 
 [driver]
 name = "sqlite"

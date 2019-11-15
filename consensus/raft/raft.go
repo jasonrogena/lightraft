@@ -1,10 +1,12 @@
 package raft
 
 import (
+	"errors"
+	fmt "fmt"
 	"log"
 	"strconv"
-	"time"
 
+	"github.com/jasonlvhit/gocron"
 	"github.com/jasonrogena/lightraft/configuration"
 	grpc "google.golang.org/grpc"
 )
@@ -54,12 +56,14 @@ type Node struct {
 	matchIndex map[string]int64 // For each node, index of the highest log entry known to be replicated on server. Initialized to 0
 
 	// Volatile, added by me
-	state             State // Default to FOLLOWER
-	electionTimer     *time.Timer
-	index             int
-	candidateTermVote map[int64]string // Map of terms and IDs of candidates that this node voted for in each of the terms. ID will be nil if node hasn't voted
-	termVoteCount     map[int64]int64  // Map of terms and number of votes this node got for each of the terms
-	config            *configuration.Config
+	state                  State // Default to FOLLOWER
+	electionScheduler      *gocron.Scheduler
+	heartbeatScheduler     *gocron.Scheduler
+	lastHeartbeatTimestamp int64 // The unix epoch (in seconds) for the last time the leader sent a heartbeat
+	index                  int
+	candidateTermVote      map[int64]string // Map of terms and IDs of candidates that this node voted for in each of the terms. ID will be nil if node hasn't voted
+	termVoteCount          map[int64]int64  // Map of terms and number of votes this node got for each of the terms
+	config                 *configuration.Config
 }
 
 const NAME string = "raft-node"
@@ -89,6 +93,7 @@ func (node *Node) getID() string {
 // RegisterGRPCHandlers adds handlers to the provided gRPC server
 func (node *Node) RegisterGRPCHandlers(grpcServer *grpc.Server) {
 	RegisterElectionServiceServer(grpcServer, &electionServer{})
+	RegisterReplicationServiceServer(grpcServer, &replicationServer{})
 }
 
 // becomeLeader resets the node data for the leader to what is recommended when the leader is
@@ -97,20 +102,31 @@ func (node *Node) becomeLeader() {
 	node.nextIndex = make(map[string]int64)
 	node.matchIndex = make(map[string]int64)
 
-	if node.electionTimer != nil {
-		node.electionTimer.Stop()
+	node.stopElectionTimer()
+	node.sendHeartbeat()
+	node.resetHeartbeatTimer()
+	log.Printf("Node %d is now leader in term %d\n", node.index, node.currentTerm)
+}
+
+// getAddress returns the gRPC address for node with the corresponding index
+func (node *Node) getGRPCAddress(nodeIndex int) (string, error) {
+	if len(node.config.Nodes) > nodeIndex {
+		return node.config.Nodes[nodeIndex].RPCBindAddress + ":" + strconv.Itoa(node.config.Nodes[nodeIndex].RPCBindPort), nil
 	}
-	log.Printf("Node %d is now leader\n", node.index)
+
+	return "", errors.New(fmt.Sprintf("No node with specified index %d", nodeIndex))
 }
 
 func (node *Node) becomeFollower() {
+	node.stopHeartbeatTimer()
 	node.resetElectionTimer()
-	log.Printf("Node %d is now follower\n", node.index)
+	log.Printf("Node %d is now follower in term %d. Leader is %s\n", node.index, node.currentTerm, node.votedFor)
 }
 
 func (node *Node) becomeCandidate() {
+	node.stopHeartbeatTimer()
 	node.resetElectionTimer()
-	log.Printf("Node %d is now candidate\n", node.index)
+	log.Printf("Node %d is now candidate in term %d\n", node.index, node.currentTerm)
 }
 
 // setState updates the state of the node. Function will throw an error if you try to update a

@@ -2,12 +2,13 @@ package raft
 
 import (
 	"context"
+	fmt "fmt"
 	"log"
 	"math/rand"
-	"strconv"
 	"time"
 
 	"github.com/go-errors/errors"
+	"github.com/jasonlvhit/gocron"
 	grpc "google.golang.org/grpc"
 )
 
@@ -18,20 +19,33 @@ type electionServer struct {
 // resetElectionTimer resets the election timer which upon expiry initializes the election
 // process
 func (node *Node) resetElectionTimer() {
-	if node.electionTimer != nil {
-		node.electionTimer.Stop()
-		node.electionTimer.Reset(node.getElectionTimeoutDuration())
-	} else {
-		node.electionTimer = time.NewTimer(node.getElectionTimeoutDuration())
+	if !node.stopElectionTimer() {
+		node.electionScheduler = gocron.NewScheduler()
+		go func() {
+			<-node.electionScheduler.Start()
+		}()
+	}
+	node.electionScheduler.Every(node.getElectionTimeoutDuration()).Seconds().Do(node.startElection)
+}
+
+func (node *Node) stopElectionTimer() bool {
+	if node.electionScheduler != nil {
+		node.electionScheduler.Clear()
+		return true
 	}
 
-	go node.startElection()
+	return false
 }
 
 // startElection waits for the election timer to expire then starts the election process
 func (node *Node) startElection() {
-	// Wait for timer to expire
-	<-node.electionTimer.C
+	// Workaround for timer bug
+	// timeDiffNano := time.Now().UnixNano() - node.lastHeartbeatTimestamp
+	// log.Printf("Time difference is %d\n", timeDiffNano)
+	// if timeDiffNano < 2000000000 {
+	// 	return
+	// }
+	// end workaround
 
 	log.Printf("Election started by node %d\n", node.index)
 
@@ -63,10 +77,17 @@ func (node *Node) startElection() {
 		LastLogTerm:  lastLogTerm,
 	}
 	for curIndex := 0; curIndex < len(node.config.Nodes); curIndex++ {
-		if curIndex != node.index {
-			address := node.config.Nodes[curIndex].RPCBindAddress + ":" + strconv.Itoa(node.config.Nodes[curIndex].RPCBindPort)
-			go node.requestForVote(address, voteReq)
+		if curIndex == node.index {
+			continue
 		}
+
+		address, addrErr := node.getGRPCAddress(curIndex)
+		if addrErr != nil {
+			log.Fatalf(addrErr.Error())
+			continue
+		}
+
+		go node.requestForVote(address, voteReq)
 	}
 }
 
@@ -91,13 +112,9 @@ func (node *Node) requestForVote(address string, voteReq VoteRequest) {
 	}
 }
 
-func (node *Node) getElectionTimeoutDuration() time.Duration {
-	// TODO: Use the recommended method for determining now long timeout should be
-	return time.Duration(rand.Intn(500)) * time.Millisecond
-}
-
-func (node *Node) GetElectionTimer() *time.Timer {
-	return node.electionTimer
+func (node *Node) getElectionTimeoutDuration() uint64 {
+	// TODO: Use the recommended method for determining how long timeout should be
+	return uint64(rand.Intn(5))
 }
 
 // Vote is a gRPC handler for processing a vote request from a gRPC client
@@ -141,7 +158,6 @@ func (node *Node) registerVote(term int64) {
 
 	node.termVoteCount[term] = node.termVoteCount[term] + 1
 
-	// TODO: Implement sending a message when node wins the election
 	if node.currentTerm == term && node.state == CANDIDATE {
 		if float64(node.termVoteCount[term]) > (float64(len(node.config.Nodes)) / 2) {
 			// make leader
@@ -151,7 +167,22 @@ func (node *Node) registerVote(term int64) {
 	}
 }
 
-func (node *Node) send
+// registerLeader registers the provided node ID as the leader in this node
+func (node *Node) registerLeader(nodeID string, term int64) error {
+	if term < node.currentTerm {
+		return errors.New(fmt.Sprintf("Cannot register node with ID %s as leader since its term %d is lower than node's term %d", nodeID, term, node.currentTerm))
+	}
+
+	if term == node.currentTerm && node.state == LEADER {
+		return errors.New(fmt.Sprintf("Cannot promote node with id %s to leader since this node is currently leader and both share the term %d", nodeID, term))
+	}
+
+	node.currentTerm = term
+	node.votedFor = nodeID
+	node.setState(FOLLOWER)
+
+	return nil
+}
 
 func (node *Node) isCandidateUpToDate(voteReq *VoteRequest) (bool, error) {
 	nodeLastLogTerm, nodeLastLogTermErr := node.getLastLogTerm()
