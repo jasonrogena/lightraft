@@ -8,9 +8,10 @@ import (
 	"time"
 
 	"github.com/go-errors/errors"
-	"github.com/jasonlvhit/gocron"
 	grpc "google.golang.org/grpc"
 )
+
+const electionMaxTimeout int = 2000 // Maximum time in milliseconds follower should wait before starting an election if leader hasn't sent a heartbeat
 
 type electionServer struct {
 	UnimplementedElectionServiceServer
@@ -19,18 +20,15 @@ type electionServer struct {
 // resetElectionTimer resets the election timer which upon expiry initializes the election
 // process
 func (node *Node) resetElectionTimer() {
-	if !node.stopElectionTimer() {
-		node.electionScheduler = gocron.NewScheduler()
-		go func() {
-			<-node.electionScheduler.Start()
-		}()
-	}
-	node.electionScheduler.Every(node.getElectionTimeoutDuration()).Seconds().Do(node.startElection)
+	node.stopElectionTimer()
+
+	node.electionTimer = time.AfterFunc(node.getElectionTimeoutDuration(), node.startElection)
 }
 
 func (node *Node) stopElectionTimer() bool {
-	if node.electionScheduler != nil {
-		node.electionScheduler.Clear()
+	if node.electionTimer != nil {
+		node.electionTimer.Stop()
+		node.electionTimer = nil
 		return true
 	}
 
@@ -40,11 +38,12 @@ func (node *Node) stopElectionTimer() bool {
 // startElection waits for the election timer to expire then starts the election process
 func (node *Node) startElection() {
 	// Workaround for timer bug
-	// timeDiffNano := time.Now().UnixNano() - node.lastHeartbeatTimestamp
-	// log.Printf("Time difference is %d\n", timeDiffNano)
-	// if timeDiffNano < 2000000000 {
-	// 	return
-	// }
+	timeDiffNano := time.Now().UnixNano() - node.lastHeartbeatTimestamp
+	log.Printf("Leader last sent heartbeat %dns ago\n", timeDiffNano)
+	if timeDiffNano < (int64(electionMaxTimeout) * 1000000) {
+		node.resetElectionTimer()
+		return
+	}
 	// end workaround
 
 	log.Printf("Election started by node %d\n", node.index)
@@ -112,9 +111,9 @@ func (node *Node) requestForVote(address string, voteReq VoteRequest) {
 	}
 }
 
-func (node *Node) getElectionTimeoutDuration() uint64 {
+func (node *Node) getElectionTimeoutDuration() time.Duration {
 	// TODO: Use the recommended method for determining how long timeout should be
-	return uint64(rand.Intn(5))
+	return time.Duration(rand.Intn(electionMaxTimeout)) * time.Millisecond
 }
 
 // Vote is a gRPC handler for processing a vote request from a gRPC client

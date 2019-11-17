@@ -5,6 +5,7 @@ import (
 	fmt "fmt"
 	"log"
 	"strconv"
+	"time"
 
 	"github.com/jasonlvhit/gocron"
 	"github.com/jasonrogena/lightraft/configuration"
@@ -57,7 +58,7 @@ type Node struct {
 
 	// Volatile, added by me
 	state                  State // Default to FOLLOWER
-	electionScheduler      *gocron.Scheduler
+	electionTimer          *time.Timer
 	heartbeatScheduler     *gocron.Scheduler
 	lastHeartbeatTimestamp int64 // The unix epoch (in seconds) for the last time the leader sent a heartbeat
 	index                  int

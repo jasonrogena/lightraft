@@ -37,8 +37,6 @@ func (node *Node) stopHeartbeatTimer() bool {
 }
 
 func (node *Node) sendHeartbeat() {
-	log.Println("Registered to send heartbeat")
-
 	lastLogIndex, lastLogIndexErr := node.getLastLogIndex()
 	if lastLogIndexErr != nil {
 		log.Fatalf(lastLogIndexErr.Error())
