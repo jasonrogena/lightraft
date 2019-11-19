@@ -1,4 +1,5 @@
 GOPATH ?= ~/go
+GO111MODULE = on
 PROTOC_ARCH ?= linux-x86_64
 PROTOC_VERSION ?= 3.10.1
 PATH := ${PATH}:${GOPATH}/bin
@@ -12,8 +13,6 @@ ${GOPATH}/bin/protoc:
 	unzip -d ${GOPATH} "/tmp/protoc-${PROTOC_VERSION}-${PROTOC_ARCH}.zip" bin/protoc
 
 reqs: ${GOPATH}/bin/protoc
-	go get -u google.golang.org/grpc
-	go get -u github.com/golang/protobuf/protoc-gen-go
 	go mod download
 
 grpcs: reqs clean

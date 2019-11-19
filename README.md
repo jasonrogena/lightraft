@@ -19,9 +19,9 @@ Before building the project export any of the following environment variables if
 
 | Variable       | Default Value | Purpose                                                                                                                                                      |
 |----------------|---------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| GOPATH         | ~/go          | Specifies the directory that contain the source for Go projects and their binaries. The Makefile for this project supports a single directory in the GOPATH. |
-| PROTOC_ARCH    | linux-x86_64  | The architecture of the protoc binary to download from [here](https://github.com/protocolbuffers/protobuf/releases). Another possible value is `osx-x86_64`. |
-| PROTOC_VERSION | 3.10.1        | The version of the protoc binary to download. Check for the list of available variables [here](https://github.com/protocolbuffers/protobuf/releases).        |
+| GOPATH | ~/go | Specifies the directory that contain the source for Go projects and their binaries. The Makefile for this project supports a single directory in the GOPATH. |
+| PROTOC_ARCH | linux-x86_64 | The architecture of the protoc binary to download from [here](https://github.com/protocolbuffers/protobuf/releases). Another possible value is `osx-x86_64`. |
+| PROTOC_VERSION | 3.10.1 | The version of the protoc binary to download. Check for the list of available variables [here](https://github.com/protocolbuffers/protobuf/releases). |
 
 Run the following command to build the Lightraft binary (will be placed in the project's root directory):
 
