@@ -101,6 +101,7 @@ func (node *Node) sendAppendEntriesRequest(address string, req AppendEntriesRequ
 	handler(resp, respErr)
 }
 
+// AppendEntries is an implementation of the append entries method in the gRPC replication service
 func (s *replicationServer) AppendEntries(ctx context.Context, req *AppendEntriesRequest) (*AppendEntriesResponse, error) {
 	resp := AppendEntriesResponse{
 		Term:    req.Term,
@@ -122,7 +123,24 @@ func (s *replicationServer) AppendEntries(ctx context.Context, req *AppendEntrie
 	node.lastHeartbeatTimestamp = time.Now().UnixNano()
 	// end workaround
 
-	// TODO: Implement adding log entry
+	for _, curEntry := range req.Entries {
+		addr, addrErr := node.getGRPCAddressFromID(req.LeaderID)
+		if addrErr != nil {
+			return &resp, addrErr
+		}
+
+		node.addLogEntry(addr, logEntry{
+			id:      node.generateEntryID(),
+			command: curEntry,
+		})
+	}
+	// TODO: implement commiting logs up to last committed entry
 	resp.Success = true
 	return &resp, nil
+}
+
+// addLogEntry inserts an entry into the log
+func (node *Node) addLogEntry(sourceAddress string, entry logEntry) error {
+	// TODO: Implement
+	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/fatih/color"
 	"github.com/firstrow/tcp_server"
 	"github.com/jasonrogena/lightraft/configuration"
 	"github.com/jasonrogena/lightraft/consensus/raft"
@@ -22,6 +23,10 @@ type consensusInterface interface {
 type persistenceInterface interface {
 	IsQueryUpdate(query string) (bool, error)
 	TryRead(query string) (string, error)
+}
+
+type ClusterClientTCP struct {
+	tcpClient *tcp_server.Client
 }
 
 func main() {
@@ -63,6 +68,23 @@ func startListening(config *configuration.Config, nodeIndex int) {
 	}
 }
 
+func newClusterClientTCP(tcpClient *tcp_server.Client) *ClusterClientTCP {
+	return &ClusterClientTCP{
+		tcpClient: tcpClient,
+	}
+}
+
+func (client *ClusterClientTCP) WriteOutput(message string, success bool) {
+	if !success {
+		message = color.RedString(message)
+	}
+	client.tcpClient.Send(message)
+}
+
+func (client *ClusterClientTCP) IsValid() bool {
+	return client.tcpClient != nil
+}
+
 func initGRPCServer(raftNode *raft.Node, nodeIndex int, config *configuration.Config) {
 	// Initialize gRPC server
 	grpcListener, grpcErr := net.Listen("tcp", ":"+strconv.Itoa(config.Nodes[nodeIndex].RPCBindPort))
@@ -84,12 +106,9 @@ func initTCPServer(raftNode *raft.Node, nodeIndex int, config *configuration.Con
 		client.Send(ansiLogo + "Connected to node " + strconv.Itoa(nodeIndex) + "\n\n")
 	})
 	tcpServer.OnNewMessage(func(client *tcp_server.Client, message string) {
-		// Check if message is an update
-		// if persistenceInterface.IsQueryUpdate(message) {
-
-		// } else {
-
-		// }
+		// TODO: Check if message is an update
+		client.Send("Got " + message)
+		raftNode.IngestCommand(newClusterClientTCP(client), message)
 	})
 	tcpServer.OnClientConnectionClosed(func(client *tcp_server.Client, err error) {
 		// connection with client lost

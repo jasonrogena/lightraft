@@ -1,0 +1,25 @@
+syntax = "proto3";
+package raft;
+
+service ProxyService {
+    rpc ReceiveEntry (ReceiveEntryRequest) returns (ReceiveEntryResponse);
+    rpc ReceiveCommitOutput (ReceiveCommitOutputRequest) returns (ReceiveCommitOutputResponse);
+}
+
+message ReceiveEntryRequest {
+    string entryID = 1;
+    string command = 2;
+    string forwardOutputToAddress = 3;
+}
+
+message ReceiveEntryResponse {
+}
+
+message ReceiveCommitOutputRequest {
+    string entryID = 1;
+    string message = 2;
+    bool success = 3;
+}
+
+message ReceiveCommitOutputResponse {
+}

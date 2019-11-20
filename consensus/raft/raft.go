@@ -4,7 +4,9 @@ import (
 	"errors"
 	fmt "fmt"
 	"log"
+	"math/rand"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jasonlvhit/gocron"
@@ -24,6 +26,11 @@ const (
 	// LEADER state allows controlling the log in the cluster
 	LEADER
 )
+
+type Client interface {
+	WriteOutput(message string, success bool)
+	IsValid() bool
+}
 
 // Flow diagram showing how to transition between node states
 //
@@ -65,6 +72,12 @@ type Node struct {
 	candidateTermVote      map[int64]string // Map of terms and IDs of candidates that this node voted for in each of the terms. ID will be nil if node hasn't voted
 	termVoteCount          map[int64]int64  // Map of terms and number of votes this node got for each of the terms
 	config                 *configuration.Config
+	entryClients           map[string]Client
+}
+
+type logEntry struct {
+	id      string
+	command string
 }
 
 const NAME string = "raft-node"
@@ -118,6 +131,23 @@ func (node *Node) getGRPCAddress(nodeIndex int) (string, error) {
 	return "", errors.New(fmt.Sprintf("No node with specified index %d", nodeIndex))
 }
 
+// getGRPCAddressFromID extracts the address from the provided node ID
+func (node *Node) getGRPCAddressFromID(nodeID string) (string, error) {
+	indexString := strings.Replace(nodeID, node.config.Cluster.Name, "", -1)
+	index, intErr := strconv.Atoi(indexString)
+	if intErr != nil {
+		return "", intErr
+	}
+
+	addr, addrErr := node.getGRPCAddress(index)
+	return addr, addrErr
+}
+
+func (node *Node) getLeaderGRPCAddress() (string, error) {
+	leaderAddr, leaderAddrErr := node.getGRPCAddressFromID(node.votedFor)
+	return leaderAddr, leaderAddrErr
+}
+
 func (node *Node) becomeFollower() {
 	node.stopHeartbeatTimer()
 	node.resetElectionTimer()
@@ -145,6 +175,41 @@ func (node *Node) setState(newState State) error {
 	}
 
 	return nil
+}
+
+func (node *Node) IngestCommand(client Client, command string) error {
+	id := node.generateEntryID()
+	node.entryClients[id] = client
+	entry := logEntry{
+		id:      id,
+		command: command,
+	}
+
+	if node.state == LEADER {
+		addr, addrErr := node.getGRPCAddress(node.index)
+		if addrErr != nil {
+			return addrErr
+		}
+
+		return node.addLogEntry(addr, entry)
+	}
+
+	leaderAddr, leaderAddrErr := node.getLeaderGRPCAddress()
+	if leaderAddrErr != nil {
+		return leaderAddrErr
+	}
+
+	return node.forwardEntry(leaderAddr, entry)
+}
+
+func (node *Node) generateEntryID() string {
+	b := make([]byte, 16)
+	_, err := rand.Read(b)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return fmt.Sprintf("%x-%x-%x-%x-%x",
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
 func (node *Node) getLastLogIndex() (int64, error) {
