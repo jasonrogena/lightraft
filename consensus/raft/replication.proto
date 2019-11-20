@@ -12,6 +12,7 @@ message AppendEntriesRequest {
     int64 prevLogIndex = 3;
     int64 prevLogTerm = 4;
     repeated string entries = 5;
+    int64 leaderCommit = 6;
 }
 
 message AppendEntriesResponse {

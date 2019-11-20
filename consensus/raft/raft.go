@@ -11,6 +11,7 @@ import (
 
 	"github.com/jasonlvhit/gocron"
 	"github.com/jasonrogena/lightraft/configuration"
+	persistence "github.com/jasonrogena/lightraft/persistence/sqlite"
 	grpc "google.golang.org/grpc"
 )
 
@@ -73,6 +74,7 @@ type Node struct {
 	termVoteCount          map[int64]int64  // Map of terms and number of votes this node got for each of the terms
 	config                 *configuration.Config
 	entryClients           map[string]Client
+	metaDB                 *persistence.Driver
 }
 
 type logEntry struct {
@@ -84,7 +86,7 @@ const NAME string = "raft-node"
 
 // NewNode should be called whenever the node is initialized
 // gets saved node data from the database and initializes ephemeral node data
-func NewNode(index int, config *configuration.Config) *Node {
+func NewNode(index int, config *configuration.Config) (*Node, error) {
 	node := new(Node)
 	// TODO: Get persistent node details from the database
 
@@ -96,12 +98,30 @@ func NewNode(index int, config *configuration.Config) *Node {
 	node.setState(FOLLOWER)
 	node.candidateTermVote = make(map[int64]string)
 	node.termVoteCount = make(map[int64]int64)
+	node.entryClients = make(map[string]Client)
+	dbErr := node.initMetaDB()
 
-	return node
+	if dbErr != nil {
+		return nil, dbErr
+	}
+
+	return node, nil
 }
 
 func (node *Node) getID() string {
 	return node.config.Cluster.Name + strconv.Itoa(node.index)
+}
+
+// initMetaDB initializes the meta database (where the non-volatile data for the node, including the log, are stored)
+func (node *Node) initMetaDB() error {
+	dbPath := node.config.Cluster.Name + "-" + strconv.Itoa(node.index) + persistence.EXTENSION
+	metaDB, metaDBErr := persistence.NewDriver(dbPath)
+	if metaDBErr != nil {
+		return metaDBErr
+	}
+	node.metaDB = metaDB
+
+	return nil
 }
 
 // RegisterGRPCHandlers adds handlers to the provided gRPC server
@@ -218,6 +238,11 @@ func (node *Node) getLastLogIndex() (int64, error) {
 }
 
 func (node *Node) getLastLogTerm() (int64, error) {
+	// TODO: Implement this
+	return 0, nil
+}
+
+func (node *Node) getLastCommitIndex() (int64, error) {
 	// TODO: Implement this
 	return 0, nil
 }

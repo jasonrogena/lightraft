@@ -59,13 +59,19 @@ func (node *Node) getHeartbeatTimeoutDuration() uint64 {
 }
 
 // sendEntriesAllNodes sends all the provided log entries to followers
-func (node *Node) sendEntriesToAllNodes(prevLogIndex int64, prevLogTerm int64, entries []string) {
+func (node *Node) sendEntriesToAllNodes(prevLogIndex int64, prevLogTerm int64, entries []string) error {
+	lastCommitIndex, lastCommitErr := node.getLastCommitIndex()
+	if lastCommitErr != nil {
+		return lastCommitErr
+	}
+
 	req := AppendEntriesRequest{
 		Term:         node.currentTerm,
 		LeaderID:     node.getID(),
 		PrevLogIndex: prevLogIndex,
 		PrevLogTerm:  prevLogTerm,
 		Entries:      entries,
+		LeaderCommit: lastCommitIndex,
 	}
 	for curIndex := 0; curIndex < len(node.config.Nodes); curIndex++ {
 		if curIndex == node.index {
@@ -84,6 +90,8 @@ func (node *Node) sendEntriesToAllNodes(prevLogIndex int64, prevLogTerm int64, e
 			}
 		})
 	}
+
+	return nil
 }
 
 func (node *Node) sendAppendEntriesRequest(address string, req AppendEntriesRequest, handler appendEntriesResposeHandler) {

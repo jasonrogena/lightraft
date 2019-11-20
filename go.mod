@@ -12,6 +12,7 @@ require (
 	github.com/mattn/go-colorable v0.1.4 // indirect
 	github.com/mattn/go-isatty v0.0.10 // indirect
 	github.com/mattn/go-sqlite3 v1.10.0
+	github.com/olekukonko/tablewriter v0.0.2
 	github.com/pkg/errors v0.8.1
 	golang.org/x/net v0.0.0-20191119073136-fc4aabc6c914 // indirect
 	golang.org/x/sys v0.0.0-20191119060738-e882bf8e40c2 // indirect

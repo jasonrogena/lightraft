@@ -22,7 +22,8 @@ type Node struct {
 }
 
 type Driver struct {
-	Name string
+	Name       string
+	PathPrefix string
 }
 
 const configPath string = "./lightraft.toml"

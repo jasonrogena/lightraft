@@ -20,9 +20,9 @@ type consensusInterface interface {
 	RegisterNeighbor(neighbor interface{}) error
 }
 
-type persistenceInterface interface {
-	IsQueryUpdate(query string) (bool, error)
-	TryRead(query string) (string, error)
+type StateMachine interface {
+	ShouldForwardToLeader(command string) bool
+	Commit(command string) (string, error)
 }
 
 type ClusterClientTCP struct {
@@ -55,7 +55,10 @@ func startListening(config *configuration.Config, nodeIndex int) {
 
 	if len(config.Nodes) > nodeIndex {
 		// Initialize RAFT node
-		raftNode := raft.NewNode(nodeIndex, config)
+		raftNode, nodeErr := raft.NewNode(nodeIndex, config)
+		if nodeErr != nil {
+			panic(nodeErr)
+		}
 
 		// Initialize the gRPC Server
 		go initGRPCServer(raftNode, nodeIndex, config)
