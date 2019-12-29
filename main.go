@@ -57,7 +57,7 @@ func startListening(config *configuration.Config, nodeIndex int) {
 		// Initialize RAFT node
 		raftNode, nodeErr := raft.NewNode(nodeIndex, config)
 		if nodeErr != nil {
-			panic(nodeErr)
+			log.Fatalln(nodeErr)
 		}
 
 		// Initialize the gRPC Server

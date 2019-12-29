@@ -37,20 +37,29 @@ func (driver *Driver) IsQueryWrite(query string) bool {
 }
 
 func (driver *Driver) RunWriteQuery(query string, args ...interface{}) (string, error) {
-	stmt, stmtErr := driver.db.Prepare(query)
-	defer stmt.Close()
-
-	if stmtErr != nil {
-		return "", stmtErr
+	result, resultErr := driver.RunRawWriteQuery(query, args...)
+	if result == nil {
+		return "", resultErr
 	}
-
-	result, resultErr := stmt.Exec(args)
 
 	return fmt.Sprintf("%d rows affected\n", result.RowsAffected), resultErr
 }
 
+func (driver *Driver) RunRawWriteQuery(query string, args ...interface{}) (sql.Result, error) {
+	stmt, stmtErr := driver.db.Prepare(query)
+
+	if stmtErr != nil {
+		return nil, stmtErr
+	}
+	defer stmt.Close()
+
+	result, resultErr := stmt.Exec(args...)
+
+	return result, resultErr
+}
+
 func (driver *Driver) RunReadQuery(query string, args ...interface{}) (string, error) {
-	result, resultErr := driver.RunSelectQuery(query, true, args)
+	result, resultErr := driver.RunSelectQuery(query, true, args...)
 
 	if resultErr != nil {
 		return "", resultErr
@@ -60,7 +69,7 @@ func (driver *Driver) RunReadQuery(query string, args ...interface{}) (string, e
 }
 
 func (driver *Driver) RunSelectQuery(query string, resultAsSingleString bool, args ...interface{}) (interface{}, error) {
-	rows, rowsErr := driver.db.Query(query, args)
+	rows, rowsErr := driver.db.Query(query, args...)
 	if rowsErr != nil {
 		return nil, rowsErr
 	}

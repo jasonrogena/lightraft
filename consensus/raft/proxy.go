@@ -27,7 +27,8 @@ func (s *proxyServer) ReceiveEntry(ctx context.Context, req *ReceiveEntryRequest
 	}
 
 	if node.state != LEADER {
-		return resp, errors.New(fmt.Sprintf("Proxied log could not be processed because expected leader is not a leader. Its state is %s and term %d", node.state, node.currentTerm))
+		currentTerm, _ := node.getCurrentTerm()
+		return resp, errors.New(fmt.Sprintf("Proxied log could not be processed because expected leader is not a leader. Its state is %s and term %d", node.state, currentTerm))
 	}
 
 	return resp, node.addLogEntry(req.ForwardOutputToAddress, logEntry{

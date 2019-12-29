@@ -49,12 +49,24 @@ func (node *Node) startElection() {
 	log.Printf("Election started by node %d\n", node.index)
 
 	// Increment node's term
-	node.currentTerm = node.currentTerm + 1
+	oldTerm, oldTermErr := node.getCurrentTerm()
+	if oldTermErr != nil {
+		log.Fatalf(oldTermErr.Error())
+		return
+	}
+
+	newTerm := oldTerm + 1
+	newTermErr := node.setCurrentTerm(newTerm)
+	if newTermErr != nil {
+		log.Fatalf(newTermErr.Error())
+		return
+	}
+
 	// Transition state to CANDIDATE
 	node.setState(CANDIDATE)
 	// Vote for self
-	node.voteForCandidate(node.getID(), node.currentTerm)
-	node.registerVote(node.currentTerm)
+	node.voteForCandidate(node.getID(), newTerm)
+	node.registerVote(newTerm)
 
 	// Request for votes in parallel from other nodes
 	lastLogIndex, lastLogIndexErr := node.getLastLogIndex()
@@ -70,7 +82,7 @@ func (node *Node) startElection() {
 	}
 
 	voteReq := VoteRequest{
-		Term:         node.currentTerm,
+		Term:         newTerm,
 		CandidateID:  node.getID(),
 		LastLogIndex: lastLogIndex,
 		LastLogTerm:  lastLogTerm,
@@ -150,34 +162,57 @@ func (node *Node) voteForCandidate(candidateId string, term int64) {
 	node.candidateTermVote[term] = candidateId
 }
 
-func (node *Node) registerVote(term int64) {
+func (node *Node) registerVote(term int64) error {
 	if _, there := node.termVoteCount[term]; !there {
 		node.termVoteCount[term] = 0
 	}
 
 	node.termVoteCount[term] = node.termVoteCount[term] + 1
 
-	if node.currentTerm == term && node.state == CANDIDATE {
+	currentTerm, currentTermErr := node.getCurrentTerm()
+	if currentTermErr != nil {
+		return currentTermErr
+	}
+
+	if currentTerm == term && node.state == CANDIDATE {
 		if float64(node.termVoteCount[term]) > (float64(len(node.config.Nodes)) / 2) {
 			// make leader
-			node.votedFor = node.getID()
+			votedForErr := node.setVotedFor(node.getID())
+			if votedForErr != nil {
+				return votedForErr
+			}
+
 			node.setState(LEADER)
 		}
 	}
+
+	return nil
 }
 
 // registerLeader registers the provided node ID as the leader in this node
 func (node *Node) registerLeader(nodeID string, term int64) error {
-	if term < node.currentTerm {
-		return errors.New(fmt.Sprintf("Cannot register node with ID %s as leader since its term %d is lower than node's term %d", nodeID, term, node.currentTerm))
+	currentTerm, currentTermErr := node.getCurrentTerm()
+	if currentTermErr != nil {
+		return currentTermErr
 	}
 
-	if term == node.currentTerm && node.state == LEADER {
+	if term < currentTerm {
+		return errors.New(fmt.Sprintf("Cannot register node with ID %s as leader since its term %d is lower than node's term %d", nodeID, term, currentTerm))
+	}
+
+	if term == currentTerm && node.state == LEADER {
 		return errors.New(fmt.Sprintf("Cannot promote node with id %s to leader since this node is currently leader and both share the term %d", nodeID, term))
 	}
 
-	node.currentTerm = term
-	node.votedFor = nodeID
+	newTermErr := node.setCurrentTerm(term)
+	if newTermErr != nil {
+		return newTermErr
+	}
+
+	votedForErr := node.setVotedFor(nodeID)
+	if votedForErr != nil {
+		return votedForErr
+	}
 	node.setState(FOLLOWER)
 
 	return nil

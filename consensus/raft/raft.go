@@ -50,11 +50,6 @@ type Client interface {
 //                        a higher term
 
 type Node struct {
-	// Should be saved to database before responding to RPC
-	currentTerm int64
-	votedFor    string
-	// log         []string will be written directly to the metadata database
-
 	// Volatile on all nodes
 	commitIndex int64 // Index of highest log entry known to be committed. Initialized to 0
 	lastApplied int64 // Index of highest log entry applied to the state machine
@@ -88,7 +83,11 @@ const NAME string = "raft-node"
 // gets saved node data from the database and initializes ephemeral node data
 func NewNode(index int, config *configuration.Config) (*Node, error) {
 	node := new(Node)
-	// TODO: Get persistent node details from the database
+	metaDb, dbErr := initMetaDB(config, index)
+	if dbErr != nil {
+		return nil, dbErr
+	}
+	node.metaDB = metaDb
 
 	// Init volatile data
 	node.index = index
@@ -99,11 +98,6 @@ func NewNode(index int, config *configuration.Config) (*Node, error) {
 	node.candidateTermVote = make(map[int64]string)
 	node.termVoteCount = make(map[int64]int64)
 	node.entryClients = make(map[string]Client)
-	dbErr := node.initMetaDB()
-
-	if dbErr != nil {
-		return nil, dbErr
-	}
 
 	return node, nil
 }
@@ -113,15 +107,93 @@ func (node *Node) getID() string {
 }
 
 // initMetaDB initializes the meta database (where the non-volatile data for the node, including the log, are stored)
-func (node *Node) initMetaDB() error {
-	dbPath := node.config.Cluster.Name + "-" + strconv.Itoa(node.index) + persistence.EXTENSION
+func initMetaDB(config *configuration.Config, nodeIndex int) (*persistence.Driver, error) {
+	dbPath := config.Cluster.Name + "-" + strconv.Itoa(nodeIndex) + "-meta" + persistence.EXTENSION
 	metaDB, metaDBErr := persistence.NewDriver(dbPath)
 	if metaDBErr != nil {
-		return metaDBErr
+		return nil, metaDBErr
 	}
-	node.metaDB = metaDB
+
+	_, nodeErr := metaDB.RunWriteQuery(`CREATE TABLE IF NOT EXISTS node (
+		idx INTEGER PRIMARY KEY,
+		currentTerm INTEGER,
+		votedFor TEXT)`)
+	if nodeErr != nil {
+		return nil, nodeErr
+	}
+	_, inNodeErr := metaDB.RunWriteQuery(`INSERT OR IGNORE INTO node(idx, currentTerm)
+	VALUES ($1, $2)`, nodeIndex, 0)
+	if inNodeErr != nil {
+		return nil, inNodeErr
+	}
+
+	// TODO: What should be unique in the log table? Just the index, or a combination of the index and the term?
+	_, logErr := metaDB.RunWriteQuery(`CREATE TABLE IF NOT EXISTS log (
+		idx INTEGER PRIMARY KEY,
+		term INTEGER,
+		committed INTEGER,
+		command TEXT NOT NULL)`)
+	if logErr != nil {
+		return nil, logErr
+	}
+
+	return metaDB, nil
+}
+
+func (node *Node) setCurrentTerm(newTerm int64) error {
+	result, inErr := node.metaDB.RunRawWriteQuery(`UPDATE node SET currentTerm = $1 WHERE idx = $2`, newTerm, node.index)
+	rowsAffected, rowsAffectedErr := result.RowsAffected()
+	errString := "An error occurred while trying to update currentTerm: %w"
+	if rowsAffectedErr != nil {
+		return fmt.Errorf(errString, rowsAffectedErr)
+	}
+	if rowsAffected != 1 {
+		return fmt.Errorf(errString, inErr)
+	}
 
 	return nil
+}
+
+func (node *Node) getCurrentTerm() (int64, error) {
+	data, dataErr := node.metaDB.RunSelectQuery(`SELECT currentTerm FROM node WHERE idx = $1`, false, node.index)
+	if dataErr != nil {
+		return -1, fmt.Errorf("Error occurred when getting the current term: %w", dataErr)
+	}
+
+	dataC := data.([][]interface{})
+	if len(dataC) != 1 {
+		return -1, fmt.Errorf("Was expecting 1 row of node data, but %d returned", len(dataC))
+	}
+
+	return *dataC[0][0].(*int64), nil
+}
+
+func (node *Node) setVotedFor(leaderID string) error {
+	result, inErr := node.metaDB.RunRawWriteQuery(`UPDATE node SET votedFor = $1 WHERE idx = $2`, leaderID, node.index)
+	rowsAffected, rowsAffectedErr := result.RowsAffected()
+	errString := "An error occurred while trying to update votedFor: %w"
+	if rowsAffectedErr != nil {
+		return fmt.Errorf(errString, rowsAffectedErr)
+	}
+	if rowsAffected != 1 {
+		return fmt.Errorf(errString, inErr)
+	}
+
+	return nil
+}
+
+func (node *Node) getVotedFor() (string, error) {
+	data, dataErr := node.metaDB.RunSelectQuery(`SELECT votedFor FROM node WHERE idx = $1`, false, node.index)
+	if dataErr != nil {
+		return "", fmt.Errorf("An error occurred while trying to get votedFor: %w", dataErr)
+	}
+
+	dataC := data.([][]interface{})
+	if len(dataC) != 1 {
+		return "", fmt.Errorf("Was expecting 1 row of node data, but %d returned", len(dataC))
+	}
+
+	return *dataC[0][0].(*string), nil
 }
 
 // RegisterGRPCHandlers adds handlers to the provided gRPC server
@@ -139,7 +211,8 @@ func (node *Node) becomeLeader() {
 	node.stopElectionTimer()
 	node.sendHeartbeat()
 	node.resetHeartbeatTimer()
-	log.Printf("Node %d is now leader in term %d\n", node.index, node.currentTerm)
+	currentTerm, _ := node.getCurrentTerm()
+	log.Printf("Node %d is now leader in term %d\n", node.index, currentTerm)
 }
 
 // getAddress returns the gRPC address for node with the corresponding index
@@ -164,20 +237,28 @@ func (node *Node) getGRPCAddressFromID(nodeID string) (string, error) {
 }
 
 func (node *Node) getLeaderGRPCAddress() (string, error) {
-	leaderAddr, leaderAddrErr := node.getGRPCAddressFromID(node.votedFor)
+	votedFor, votedForErr := node.getVotedFor()
+	if votedForErr != nil {
+		return "", votedForErr
+	}
+
+	leaderAddr, leaderAddrErr := node.getGRPCAddressFromID(votedFor)
 	return leaderAddr, leaderAddrErr
 }
 
 func (node *Node) becomeFollower() {
 	node.stopHeartbeatTimer()
 	node.resetElectionTimer()
-	log.Printf("Node %d is now follower in term %d. Leader is %s\n", node.index, node.currentTerm, node.votedFor)
+	currentTerm, _ := node.getCurrentTerm()
+	votedFor, _ := node.getVotedFor()
+	log.Printf("Node %d is now follower in term %d. Leader is %s\n", node.index, currentTerm, votedFor)
 }
 
 func (node *Node) becomeCandidate() {
 	node.stopHeartbeatTimer()
 	node.resetElectionTimer()
-	log.Printf("Node %d is now candidate in term %d\n", node.index, node.currentTerm)
+	currentTerm, _ := node.getCurrentTerm()
+	log.Printf("Node %d is now candidate in term %d\n", node.index, currentTerm)
 }
 
 // setState updates the state of the node. Function will throw an error if you try to update a

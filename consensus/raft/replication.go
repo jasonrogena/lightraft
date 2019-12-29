@@ -65,8 +65,13 @@ func (node *Node) sendEntriesToAllNodes(prevLogIndex int64, prevLogTerm int64, e
 		return lastCommitErr
 	}
 
+	currentTerm, currentTermErr := node.getCurrentTerm()
+	if currentTermErr != nil {
+		return currentTermErr
+	}
+
 	req := AppendEntriesRequest{
-		Term:         node.currentTerm,
+		Term:         currentTerm,
 		LeaderID:     node.getID(),
 		PrevLogIndex: prevLogIndex,
 		PrevLogTerm:  prevLogTerm,
