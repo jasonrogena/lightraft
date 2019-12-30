@@ -293,7 +293,13 @@ func (node *Node) IngestCommand(client Client, command string) error {
 			return addrErr
 		}
 
-		return node.addLogEntry(addr, entry)
+		addEntryErr := node.addLogEntry(addr, entry)
+		if addEntryErr != nil {
+			return addEntryErr
+		}
+
+		sendEntryErr := node.sendEntriesToAllNodes([]string{command})
+		return sendEntryErr
 	}
 
 	leaderAddr, leaderAddrErr := node.getLeaderGRPCAddress()

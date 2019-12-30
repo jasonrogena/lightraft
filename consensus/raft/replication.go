@@ -37,13 +37,7 @@ func (node *Node) stopHeartbeatTimer() bool {
 }
 
 func (node *Node) sendHeartbeat() {
-	lastLogIndex, lastLogTerm, lastLogErr := node.getLastLogEntryDetails()
-	if lastLogErr != nil {
-		log.Fatalf(lastLogErr.Error())
-		return
-	}
-
-	node.sendEntriesToAllNodes(lastLogIndex, lastLogTerm, make([]string, 0))
+	node.sendEntriesToAllNodes(make([]string, 0))
 	log.Println("Heartbeat sent")
 }
 
@@ -53,7 +47,12 @@ func (node *Node) getHeartbeatTimeoutDuration() uint64 {
 }
 
 // sendEntriesAllNodes sends all the provided log entries to followers
-func (node *Node) sendEntriesToAllNodes(prevLogIndex int64, prevLogTerm int64, entries []string) error {
+func (node *Node) sendEntriesToAllNodes(entries []string) error {
+	prevLogIndex, prevLogTerm, prevLogErr := node.getLastLogEntryDetails()
+	if prevLogErr != nil {
+		return prevLogErr
+	}
+
 	lastCommitIndex, lastCommitErr := node.getLastCommittedLogEntryIndex()
 	if lastCommitErr != nil {
 		return lastCommitErr
@@ -84,6 +83,8 @@ func (node *Node) sendEntriesToAllNodes(prevLogIndex int64, prevLogTerm int64, e
 		}
 
 		go node.sendAppendEntriesRequest(address, req, func(resp *AppendEntriesResponse, err error) {
+			// TODO: Implement incrementing count of number of nodes that have successfully added log entry
+			// When count is greater than half of the nodes, commit the log entry
 			if err != nil {
 				log.Printf("Remote node returned the error while appending entries:%+v", errors.Wrap(err, ""))
 			}
@@ -148,6 +149,12 @@ func (s *replicationServer) AppendEntries(ctx context.Context, req *AppendEntrie
 
 // addLogEntry inserts an entry into the log
 func (node *Node) addLogEntry(sourceAddress string, entry logEntry) error {
-	// TODO: Implement
-	return nil
+	curTerm, curTermErr := node.getCurrentTerm()
+	if curTermErr != nil {
+		return curTermErr
+	}
+
+	_, inErr := node.metaDB.RunRawWriteQuery(`INSERT INTO log (id, term, committed, command)
+		VALUES ($1, $2, $3, $4)`, entry.id, curTerm, 0, entry.command)
+	return inErr
 }
