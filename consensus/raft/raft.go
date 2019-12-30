@@ -127,12 +127,13 @@ func initMetaDB(config *configuration.Config, nodeIndex int) (*persistence.Drive
 		return nil, inNodeErr
 	}
 
-	// TODO: What should be unique in the log table? Just the index, or a combination of the index and the term?
 	_, logErr := metaDB.RunWriteQuery(`CREATE TABLE IF NOT EXISTS log (
-		idx INTEGER PRIMARY KEY,
+		id TEXT PRIMARY KEY,
+		idx INTEGER,
 		term INTEGER,
 		committed INTEGER,
-		command TEXT NOT NULL)`)
+		command TEXT NOT NULL,
+		UNIQUE(idx, term) ON CONFLICT ROLLBACK)`)
 	if logErr != nil {
 		return nil, logErr
 	}
