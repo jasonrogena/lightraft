@@ -137,18 +137,25 @@ func (s *replicationServer) AppendEntries(ctx context.Context, req *AppendEntrie
 			return &resp, addrErr
 		}
 
-		node.addLogEntry(addr, logEntry{
-			id:      node.generateEntryID(),
-			command: curEntry,
-		})
+		node.addLogEntry(
+			stateMachineClient{
+				clientType: cluster,
+				address:    addr,
+			},
+			logEntry{
+				id:      node.generateEntryID(),
+				command: curEntry,
+			})
+		// TODO: implement catching errors and sending back either a success or an error to the leader
 	}
 	// TODO: implement commiting logs up to last committed entry
 	resp.Success = true
 	return &resp, nil
 }
 
-// addLogEntry inserts an entry into the log
-func (node *Node) addLogEntry(sourceAddress string, entry logEntry) error {
+// addLogEntry inserts an entry into the log. The function is also responsible for saving the source address
+// in memory (if the current node is a leader)
+func (node *Node) addLogEntry(sourceAddress stateMachineClient, entry logEntry) error {
 	curTerm, curTermErr := node.getCurrentTerm()
 	if curTermErr != nil {
 		return curTermErr
@@ -156,5 +163,15 @@ func (node *Node) addLogEntry(sourceAddress string, entry logEntry) error {
 
 	_, inErr := node.metaDB.RunRawWriteQuery(`INSERT INTO log (id, term, committed, command)
 		VALUES ($1, $2, $3, $4)`, entry.id, curTerm, 0, entry.command)
-	return inErr
+	if inErr != nil {
+		return inErr
+	}
+
+	// Register the source address so that the command output will be sent back to it whenever the command
+	// is executed in the state machine
+	if node.state == LEADER {
+		node.registerStateMachineClient(sourceAddress, entry.id)
+	}
+
+	return nil
 }

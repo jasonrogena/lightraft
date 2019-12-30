@@ -68,7 +68,7 @@ type Node struct {
 	candidateTermVote      map[int64]string // Map of terms and IDs of candidates that this node voted for in each of the terms. ID will be nil if node hasn't voted
 	termVoteCount          map[int64]int64  // Map of terms and number of votes this node got for each of the terms
 	config                 *configuration.Config
-	entryClients           map[string]Client
+	entryClients           map[string]stateMachineClient
 	metaDB                 *persistence.Driver
 }
 
@@ -76,6 +76,24 @@ type logEntry struct {
 	id      string
 	command string
 }
+
+// stateMachineClient holds the details of a client from where
+// a command has been gotten from. This can either be a client connected
+// to the node's port or another node in the cluster that has proxied the command
+// to the leader node
+type stateMachineClient struct {
+	clientType clientType
+	address    interface{}
+}
+
+type clientType int
+
+const (
+	// cluster clientType stands for nodes in the Raft consensus cluster
+	cluster clientType = 1 << iota
+	// tcp clientType stands for clients connected to the non-gRPC TCP port of a node
+	tcp
+)
 
 const NAME string = "raft-node"
 
@@ -97,7 +115,7 @@ func NewNode(index int, config *configuration.Config) (*Node, error) {
 	node.setState(FOLLOWER)
 	node.candidateTermVote = make(map[int64]string)
 	node.termVoteCount = make(map[int64]int64)
-	node.entryClients = make(map[string]Client)
+	node.entryClients = make(map[string]stateMachineClient)
 
 	return node, nil
 }
@@ -279,35 +297,53 @@ func (node *Node) setState(newState State) error {
 	return nil
 }
 
-func (node *Node) IngestCommand(client Client, command string) error {
+func (node *Node) IngestCommand(client Client, command string) {
 	id := node.generateEntryID()
-	node.entryClients[id] = client
 	entry := logEntry{
 		id:      id,
 		command: command,
 	}
 
-	if node.state == LEADER {
-		addr, addrErr := node.getGRPCAddress(node.index)
-		if addrErr != nil {
-			return addrErr
-		}
-
-		addEntryErr := node.addLogEntry(addr, entry)
+	switch node.state {
+	case LEADER:
+		addEntryErr := node.addLogEntry(
+			stateMachineClient{
+				clientType: tcp,
+				address:    client,
+			},
+			entry)
 		if addEntryErr != nil {
-			return addEntryErr
+			node.sendErrorToTCPClient(client, addEntryErr)
+			return
 		}
 
 		sendEntryErr := node.sendEntriesToAllNodes([]string{command})
-		return sendEntryErr
-	}
+		if sendEntryErr != nil {
+			node.sendErrorToTCPClient(client, sendEntryErr)
+			return
+		}
+	case FOLLOWER:
+		leaderAddr, leaderAddrErr := node.getLeaderGRPCAddress()
+		if leaderAddrErr != nil {
+			node.sendErrorToTCPClient(client, leaderAddrErr)
+			return
+		}
 
-	leaderAddr, leaderAddrErr := node.getLeaderGRPCAddress()
-	if leaderAddrErr != nil {
-		return leaderAddrErr
+		forwardErr := node.forwardEntry(leaderAddr, client, entry)
+		if forwardErr != nil {
+			node.sendErrorToTCPClient(client, forwardErr)
+			return
+		}
+	default:
+		node.sendErrorToTCPClient(client, fmt.Errorf("Node not in a state able to accept commands"))
+		return
 	}
+}
 
-	return node.forwardEntry(leaderAddr, entry)
+func (node *Node) sendErrorToTCPClient(client Client, err error) {
+	if client.IsValid() {
+		client.WriteOutput(err.Error(), false)
+	}
 }
 
 func (node *Node) generateEntryID() string {
@@ -355,5 +391,37 @@ func (node *Node) getLastCommittedLogEntryIndex() (int64, error) {
 		return *dataC[0][0].(*int64), nil
 	default:
 		return -1, fmt.Errorf("Was expecting 1 row of node data, but %d returned", len(dataC))
+	}
+}
+
+// registerStateMachineClient records the client that sent the log entry with the provided ID
+// for the purposes of sending the command output when the log entry is committed to the state
+// machine
+func (node *Node) registerStateMachineClient(client stateMachineClient, logEntryID string) {
+	node.entryClients[logEntryID] = client
+}
+
+func (node *Node) sendCommandOutputToClient(entryID string, output string, success bool) error {
+	client, clientOk := node.entryClients[entryID]
+
+	if !clientOk {
+		return fmt.Errorf("Could not connect to client to deliver response")
+	}
+
+	switch client.clientType {
+	case tcp:
+		tcpClient := client.address.(Client)
+		if !tcpClient.IsValid() {
+			return fmt.Errorf("Could not connect to client to deliver response")
+		}
+
+		tcpClient.WriteOutput(output, success)
+
+		return nil
+	case cluster:
+		forwardErr := node.forwardCommitOutput(client.address.(string), entryID, output, success)
+		return forwardErr
+	default:
+		return fmt.Errorf("Could not send back response to client because its type is unknown")
 	}
 }

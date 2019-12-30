@@ -31,12 +31,19 @@ func (s *proxyServer) ReceiveEntry(ctx context.Context, req *ReceiveEntryRequest
 		return resp, errors.New(fmt.Sprintf("Proxied log could not be processed because expected leader is not a leader. Its state is %s and term %d", node.state, currentTerm))
 	}
 
-	return resp, node.addLogEntry(req.ForwardOutputToAddress, logEntry{
-		id:      req.EntryID,
-		command: req.Command,
-	})
+	return resp, node.addLogEntry(
+		stateMachineClient{
+			clientType: cluster,
+			address:    req.ForwardOutputToAddress,
+		},
+		logEntry{
+			id:      req.EntryID,
+			command: req.Command,
+		})
 }
 
+// ReceiveCommitOutput is an implementation of the receive commit output method in the gRPC proxy server.
+// ReceiveCommitOutput is ideally called on the follower node that had sent a ReceiveEntry gRPC to its leader
 func (s *proxyServer) ReceiveCommitOutput(ctx context.Context, req *ReceiveCommitOutputRequest) (*ReceiveCommitOutputResponse, error) {
 	resp := &ReceiveCommitOutputResponse{}
 
@@ -46,24 +53,18 @@ func (s *proxyServer) ReceiveCommitOutput(ctx context.Context, req *ReceiveCommi
 		return resp, errors.New("Could not get data from gRPC server")
 	}
 
-	client, clientOk := node.entryClients[req.EntryID]
+	sendCommandErr := node.sendCommandOutputToClient(req.EntryID, req.Message, req.Success)
 
-	if !clientOk || client == nil || !client.IsValid() {
-		return resp, errors.New("Could not connect to client to deliver response")
-	}
-
-	client.WriteOutput(req.Message, req.Success)
-
-	return resp, nil
+	return resp, sendCommandErr
 }
 
-func (node *Node) forwardEntry(address string, entry logEntry) error {
-	conn, connErr := grpc.Dial(address, grpc.WithInsecure(), grpc.WithBlock())
+func (node *Node) forwardEntry(leaderAddr string, tcpClient Client, entry logEntry) error {
+	conn, connErr := grpc.Dial(leaderAddr, grpc.WithInsecure(), grpc.WithBlock())
 	if connErr != nil {
 		log.Fatalf(connErr.Error())
 	}
 	defer conn.Close()
-	client := NewProxyServiceClient(conn)
+	grpcClient := NewProxyServiceClient(conn)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -73,10 +74,37 @@ func (node *Node) forwardEntry(address string, entry logEntry) error {
 		return addrErr
 	}
 
-	_, respErr := client.ReceiveEntry(ctx, &ReceiveEntryRequest{
+	node.registerStateMachineClient(
+		stateMachineClient{
+			clientType: tcp,
+			address:    tcpClient,
+		},
+		entry.id)
+
+	_, respErr := grpcClient.ReceiveEntry(ctx, &ReceiveEntryRequest{
 		EntryID:                entry.id,
 		Command:                entry.command,
 		ForwardOutputToAddress: addr,
+	})
+
+	return respErr
+}
+
+func (node *Node) forwardCommitOutput(followerAddr string, entryID string, message string, success bool) error {
+	conn, connErr := grpc.Dial(followerAddr, grpc.WithInsecure(), grpc.WithBlock())
+	if connErr != nil {
+		log.Fatalf(connErr.Error())
+	}
+	defer conn.Close()
+	grpcClient := NewProxyServiceClient(conn)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	_, respErr := grpcClient.ReceiveCommitOutput(ctx, &ReceiveCommitOutputRequest{
+		EntryID: entryID,
+		Message: message,
+		Success: success,
 	})
 
 	return respErr
