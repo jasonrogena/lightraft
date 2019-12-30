@@ -69,15 +69,9 @@ func (node *Node) startElection() {
 	node.registerVote(newTerm)
 
 	// Request for votes in parallel from other nodes
-	lastLogIndex, lastLogIndexErr := node.getLastLogIndex()
-	if lastLogIndexErr != nil {
-		log.Fatalf(lastLogIndexErr.Error())
-		return
-	}
-
-	lastLogTerm, lastLogTermErr := node.getLastLogTerm()
-	if lastLogTermErr != nil {
-		log.Fatalf(lastLogTermErr.Error())
+	lastLogIndex, lastLogTerm, lastLogErr := node.getLastLogEntryDetails()
+	if lastLogErr != nil {
+		log.Fatalf(lastLogErr.Error())
 		return
 	}
 
@@ -219,19 +213,13 @@ func (node *Node) registerLeader(nodeID string, term int64) error {
 }
 
 func (node *Node) isCandidateUpToDate(voteReq *VoteRequest) (bool, error) {
-	nodeLastLogTerm, nodeLastLogTermErr := node.getLastLogTerm()
-	if nodeLastLogTermErr != nil {
-		log.Fatalf(nodeLastLogTermErr.Error())
-		return false, nodeLastLogTermErr
+	nodeLastLogIndex, nodeLastLogTerm, nodeLastLogErr := node.getLastLogEntryDetails()
+	if nodeLastLogErr != nil {
+		log.Fatalf(nodeLastLogErr.Error())
+		return false, nodeLastLogErr
 	}
 
 	if nodeLastLogTerm == voteReq.GetLastLogTerm() {
-		nodeLastLogIndex, nodeLastLogIndexErr := node.getLastLogIndex()
-		if nodeLastLogIndexErr != nil {
-			log.Fatalf(nodeLastLogIndexErr.Error())
-			return false, nodeLastLogIndexErr
-		}
-
 		return voteReq.GetLastLogIndex() >= nodeLastLogIndex, nil
 	}
 

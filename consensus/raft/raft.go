@@ -314,17 +314,40 @@ func (node *Node) generateEntryID() string {
 		b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
-func (node *Node) getLastLogIndex() (int64, error) {
-	// TODO: Implement this
-	return 0, nil
+// getLastLogEntryDetails returns the details of the last log in
+// this order:
+//   - index
+//   - term
+func (node *Node) getLastLogEntryDetails() (int64, int64, error) {
+	data, dataErr := node.metaDB.RunSelectQuery(`SELECT idx, term FROM log ORDER BY idx DESC LIMIT 1`, false)
+	if dataErr != nil {
+		return -1, -1, dataErr
+	}
+
+	dataC := data.([][]interface{})
+	switch len(dataC) {
+	case 0:
+		return 0, 0, nil
+	case 1:
+		return *dataC[0][0].(*int64), *dataC[0][1].(*int64), nil
+	default:
+		return -1, -1, fmt.Errorf("Was expecting 1 row of node data, but %d returned", len(dataC))
+	}
 }
 
-func (node *Node) getLastLogTerm() (int64, error) {
-	// TODO: Implement this
-	return 0, nil
-}
+func (node *Node) getLastCommittedLogEntryIndex() (int64, error) {
+	data, dataErr := node.metaDB.RunSelectQuery(`SELECT idx FROM log WHERE committed = $1 ORDER BY idx DESC LIMIT 1`, false, 1)
+	if dataErr != nil {
+		return -1, dataErr
+	}
 
-func (node *Node) getLastCommitIndex() (int64, error) {
-	// TODO: Implement this
-	return 0, nil
+	dataC := data.([][]interface{})
+	switch len(dataC) {
+	case 0:
+		return 0, nil
+	case 1:
+		return *dataC[0][0].(*int64), nil
+	default:
+		return -1, fmt.Errorf("Was expecting 1 row of node data, but %d returned", len(dataC))
+	}
 }

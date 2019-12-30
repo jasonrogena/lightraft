@@ -37,15 +37,9 @@ func (node *Node) stopHeartbeatTimer() bool {
 }
 
 func (node *Node) sendHeartbeat() {
-	lastLogIndex, lastLogIndexErr := node.getLastLogIndex()
-	if lastLogIndexErr != nil {
-		log.Fatalf(lastLogIndexErr.Error())
-		return
-	}
-
-	lastLogTerm, lastLogTermErr := node.getLastLogTerm()
-	if lastLogTermErr != nil {
-		log.Fatalf(lastLogTermErr.Error())
+	lastLogIndex, lastLogTerm, lastLogErr := node.getLastLogEntryDetails()
+	if lastLogErr != nil {
+		log.Fatalf(lastLogErr.Error())
 		return
 	}
 
@@ -60,7 +54,7 @@ func (node *Node) getHeartbeatTimeoutDuration() uint64 {
 
 // sendEntriesAllNodes sends all the provided log entries to followers
 func (node *Node) sendEntriesToAllNodes(prevLogIndex int64, prevLogTerm int64, entries []string) error {
-	lastCommitIndex, lastCommitErr := node.getLastCommitIndex()
+	lastCommitIndex, lastCommitErr := node.getLastCommittedLogEntryIndex()
 	if lastCommitErr != nil {
 		return lastCommitErr
 	}
