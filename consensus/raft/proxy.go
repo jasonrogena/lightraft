@@ -35,11 +35,7 @@ func (s *proxyServer) ReceiveEntry(ctx context.Context, req *ReceiveEntryRequest
 		stateMachineClient{
 			clientType: cluster,
 			address:    req.ForwardOutputToAddress,
-		},
-		logEntry{
-			id:      req.EntryID,
-			command: req.Command,
-		})
+		}, req.Entry)
 }
 
 // ReceiveCommitOutput is an implementation of the receive commit output method in the gRPC proxy server.
@@ -58,7 +54,7 @@ func (s *proxyServer) ReceiveCommitOutput(ctx context.Context, req *ReceiveCommi
 	return resp, sendCommandErr
 }
 
-func (node *Node) forwardEntry(leaderAddr string, tcpClient Client, entry logEntry) error {
+func (node *Node) forwardEntry(leaderAddr string, tcpClient Client, entry *LogEntry) error {
 	conn, connErr := grpc.Dial(leaderAddr, grpc.WithInsecure(), grpc.WithBlock())
 	if connErr != nil {
 		log.Fatalf(connErr.Error())
@@ -79,11 +75,10 @@ func (node *Node) forwardEntry(leaderAddr string, tcpClient Client, entry logEnt
 			clientType: tcp,
 			address:    tcpClient,
 		},
-		entry.id)
+		entry.Id)
 
 	_, respErr := grpcClient.ReceiveEntry(ctx, &ReceiveEntryRequest{
-		EntryID:                entry.id,
-		Command:                entry.command,
+		Entry:                  entry,
 		ForwardOutputToAddress: addr,
 	})
 

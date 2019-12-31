@@ -72,11 +72,6 @@ type Node struct {
 	metaDB                 *persistence.Driver
 }
 
-type logEntry struct {
-	id      string
-	command string
-}
-
 // stateMachineClient holds the details of a client from where
 // a command has been gotten from. This can either be a client connected
 // to the node's port or another node in the cluster that has proxied the command
@@ -299,9 +294,9 @@ func (node *Node) setState(newState State) error {
 
 func (node *Node) IngestCommand(client Client, command string) {
 	id := node.generateEntryID()
-	entry := logEntry{
-		id:      id,
-		command: command,
+	entry := &LogEntry{
+		Id:      id,
+		Command: command,
 	}
 
 	switch node.state {
@@ -317,7 +312,7 @@ func (node *Node) IngestCommand(client Client, command string) {
 			return
 		}
 
-		sendEntryErr := node.sendEntriesToAllNodes([]string{command})
+		sendEntryErr := node.sendEntriesToAllNodes([]*LogEntry{entry})
 		if sendEntryErr != nil {
 			node.sendErrorToTCPClient(client, sendEntryErr)
 			return

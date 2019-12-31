@@ -1,6 +1,8 @@
 syntax = "proto3";
 package raft;
 
+import "raft.proto";
+
 service ReplicationService {
     rpc AppendEntries (AppendEntriesRequest) returns (AppendEntriesResponse);
 }
@@ -11,11 +13,16 @@ message AppendEntriesRequest {
     string leaderID = 2;
     int64 prevLogIndex = 3;
     int64 prevLogTerm = 4;
-    repeated string entries = 5;
+    repeated LogEntry entries = 5;
     int64 leaderCommit = 6;
 }
 
-message AppendEntriesResponse {
-    int64 term = 1;
+message LogEntryReplicationStatus {
+    string logEntryID = 1;
     bool success = 2;
+}
+
+message AppendEntriesResponse {
+    repeated LogEntryReplicationStatus entryStatuses = 1;
+    int64 term = 2;
 }

@@ -1,0 +1,7 @@
+syntax = "proto3";
+package raft;
+
+message LogEntry {
+    string id = 1;
+    string command = 2;
+}
