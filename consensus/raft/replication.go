@@ -213,9 +213,34 @@ func (s *replicationServer) AppendEntries(ctx context.Context, req *AppendEntrie
 
 		statuses = append(statuses, &curStatus)
 	}
-	// TODO: implement commiting logs up to last committed entry
+
+	// Commit logs up to last committed entry
+	commitErr := node.commitUpToIndex(req.LeaderCommit)
+	if commitErr != nil {
+		log.Printf("An error occurred while trying to commit log entries up to index %d: %v\n", req.LeaderCommit, commitErr)
+	}
+
 	resp.EntryStatuses = statuses
 	return &resp, nil
+}
+
+// commitUpToIndex attempts to commit log entries up to the provided index
+func (node *Node) commitUpToIndex(index int64) error {
+	data, dataErr := node.metaDB.RunSelectQuery(`SELECT id FROM log WHERE committed = 0 AND idx <= $1 ORDER BY id ASC`, false, index)
+	if dataErr != nil {
+		return fmt.Errorf("Error occurred when getting uncommitted entries up to '%d' is committed: %w", index, dataErr)
+	}
+
+	dataC := data.([][]interface{})
+	for i := 0; i < len(dataC); i++ {
+		commitErr := node.commitLogEntry(*dataC[i][0].(*string))
+
+		if commitErr != nil {
+			return commitErr
+		}
+	}
+
+	return nil
 }
 
 // addLogEntry inserts an entry into the log. The function is also responsible for saving the source address
