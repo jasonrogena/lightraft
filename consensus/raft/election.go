@@ -169,7 +169,7 @@ func (node *Node) registerVote(term int64) error {
 	}
 
 	if currentTerm == term && node.state == CANDIDATE {
-		if float64(node.termVoteCount[term]) > (float64(len(node.config.Nodes)) / 2) {
+		if node.isValueGreaterThanHalfNodes(node.termVoteCount[term]) {
 			// make leader
 			votedForErr := node.setVotedFor(node.getID())
 			if votedForErr != nil {

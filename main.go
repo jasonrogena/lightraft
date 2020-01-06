@@ -11,6 +11,7 @@ import (
 	"github.com/firstrow/tcp_server"
 	"github.com/jasonrogena/lightraft/configuration"
 	"github.com/jasonrogena/lightraft/consensus/raft"
+	"github.com/jasonrogena/lightraft/persistence"
 	"google.golang.org/grpc"
 )
 
@@ -18,11 +19,6 @@ type consensusInterface interface {
 	Exit() error
 	Init() error
 	RegisterNeighbor(neighbor interface{}) error
-}
-
-type StateMachine interface {
-	ShouldForwardToLeader(command string) bool
-	Commit(command string) (string, error)
 }
 
 type ClusterClientTCP struct {
@@ -54,8 +50,14 @@ func startListening(config *configuration.Config, nodeIndex int) {
 	//persistenceInterface := persistence.Init(&config, nodeIndex)
 
 	if len(config.Nodes) > nodeIndex {
+		// Initialize database (state machine)
+		db, dbErr := persistence.NewDatabase(config, nodeIndex)
+		if dbErr != nil {
+			log.Fatalln(dbErr)
+		}
+
 		// Initialize RAFT node
-		raftNode, nodeErr := raft.NewNode(nodeIndex, config)
+		raftNode, nodeErr := raft.NewNode(nodeIndex, config, db)
 		if nodeErr != nil {
 			log.Fatalln(nodeErr)
 		}
@@ -109,7 +111,6 @@ func initTCPServer(raftNode *raft.Node, nodeIndex int, config *configuration.Con
 		client.Send(ansiLogo + "Connected to node " + strconv.Itoa(nodeIndex) + "\n\n")
 	})
 	tcpServer.OnNewMessage(func(client *tcp_server.Client, message string) {
-		// TODO: Check if message is an update
 		client.Send("Got " + message)
 		raftNode.IngestCommand(newClusterClientTCP(client), message)
 	})

@@ -21,7 +21,7 @@ func NewDatabase(config *configuration.Config, nodeIndex int) (*Database, error)
 	database := &Database{}
 	switch config.Driver.Name {
 	case sqlite.NAME:
-		driver, dbError := sqlite.NewDriver(sqlite.GetSqliteDBPath(config, nodeIndex))
+		driver, dbError := sqlite.NewDriver(sqlite.GetDBPath(config, nodeIndex))
 		database.driver = driver
 		return database, dbError
 	}

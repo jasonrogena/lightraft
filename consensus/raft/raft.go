@@ -11,6 +11,7 @@ import (
 
 	"github.com/jasonlvhit/gocron"
 	"github.com/jasonrogena/lightraft/configuration"
+	"github.com/jasonrogena/lightraft/consensus"
 	persistence "github.com/jasonrogena/lightraft/persistence/sqlite"
 	grpc "google.golang.org/grpc"
 )
@@ -61,15 +62,17 @@ type Node struct {
 
 	// Volatile, added by me
 	state                  State // Default to FOLLOWER
+	stateMachine           consensus.StateMachine
 	electionTimer          *time.Timer
 	heartbeatScheduler     *gocron.Scheduler
 	lastHeartbeatTimestamp int64 // The unix epoch (in seconds) for the last time the leader sent a heartbeat
 	index                  int
 	candidateTermVote      map[int64]string // Map of terms and IDs of candidates that this node voted for in each of the terms. ID will be nil if node hasn't voted
-	termVoteCount          map[int64]int64  // Map of terms and number of votes this node got for each of the terms
+	termVoteCount          map[int64]int    // Map of terms and number of votes this node got for each of the terms
 	config                 *configuration.Config
 	entryClients           map[string]stateMachineClient
 	metaDB                 *persistence.Driver
+	recordedLogEntries     map[string]int
 }
 
 // stateMachineClient holds the details of a client from where
@@ -94,7 +97,7 @@ const NAME string = "raft-node"
 
 // NewNode should be called whenever the node is initialized
 // gets saved node data from the database and initializes ephemeral node data
-func NewNode(index int, config *configuration.Config) (*Node, error) {
+func NewNode(index int, config *configuration.Config, stateMachine consensus.StateMachine) (*Node, error) {
 	node := new(Node)
 	metaDb, dbErr := initMetaDB(config, index)
 	if dbErr != nil {
@@ -103,14 +106,16 @@ func NewNode(index int, config *configuration.Config) (*Node, error) {
 	node.metaDB = metaDb
 
 	// Init volatile data
+	node.stateMachine = stateMachine
 	node.index = index
 	node.config = config
 	node.commitIndex = 0
 	node.lastApplied = 0
 	node.setState(FOLLOWER)
 	node.candidateTermVote = make(map[int64]string)
-	node.termVoteCount = make(map[int64]int64)
+	node.termVoteCount = make(map[int64]int)
 	node.entryClients = make(map[string]stateMachineClient)
+	node.recordedLogEntries = make(map[string]int)
 
 	return node, nil
 }
@@ -312,12 +317,24 @@ func (node *Node) IngestCommand(client Client, command string) {
 			return
 		}
 
+		node.recordedLogEntries[entry.Id] = 1
 		sendEntryErr := node.sendEntriesToAllNodes([]*LogEntry{entry})
 		if sendEntryErr != nil {
 			node.sendErrorToTCPClient(client, sendEntryErr)
 			return
 		}
 	case FOLLOWER:
+		if !node.stateMachine.ShouldForwardToLeader(command) {
+			output, outputErr := node.stateMachine.Commit(command)
+
+			client.WriteOutput(output, true)
+			if outputErr != nil {
+				node.sendErrorToTCPClient(client, outputErr)
+			}
+
+			return
+		}
+
 		leaderAddr, leaderAddrErr := node.getLeaderGRPCAddress()
 		if leaderAddrErr != nil {
 			node.sendErrorToTCPClient(client, leaderAddrErr)
@@ -419,4 +436,8 @@ func (node *Node) sendCommandOutputToClient(entryID string, output string, succe
 	default:
 		return fmt.Errorf("Could not send back response to client because its type is unknown")
 	}
+}
+
+func (node *Node) isValueGreaterThanHalfNodes(value int) bool {
+	return float64(value) > (float64(len(node.config.Nodes)) / 2)
 }
