@@ -49,7 +49,23 @@ func (node *Node) getHeartbeatTimeoutDuration() uint64 {
 
 // sendEntriesAllNodes sends all the provided log entries to followers
 func (node *Node) sendEntriesToAllNodes(entries []*LogEntry) error {
-	prevLogIndex, prevLogTerm, prevLogErr := node.getLastLogEntryDetails()
+	var firstIdx int64 = -1
+	if len(entries) > 0 {
+		rawRowData, rawRowDataErr := node.metaDB.RunSelectQuery(`SELECT idx FROM log WHERE id = $1`, false, entries[0].Id)
+		if rawRowDataErr != nil {
+			return fmt.Errorf("Could not get the index of entry with ID '%s': %w", entries[0].Id, rawRowDataErr)
+		}
+
+		rowData := rawRowData.([][]interface{})
+		firstIdxPtr, assertIdxErr := rowData[0][0].(*int64)
+		if !assertIdxErr {
+			return fmt.Errorf("Could not assert the type of the data returned as the index of the entry with ID '%s' is *int64: %w", entries[0].Id, assertIdxErr)
+		}
+
+		firstIdx = *firstIdxPtr
+	}
+
+	prevLogIndex, prevLogTerm, prevLogErr := node.getLastLogEntryDetails(firstIdx)
 	if prevLogErr != nil {
 		return prevLogErr
 	}
@@ -136,7 +152,7 @@ func (node *Node) commitLogEntry(id string) error {
 		return fmt.Errorf("Was expecting 1 row of log entry data for entry with id '%s', but %d returned", id, len(dataC))
 	}
 
-	if *dataC[0][0].(*int) == 1 {
+	if *dataC[0][0].(*int64) == 1 {
 		log.Printf("Log entry with id '%s' already committed, not commiting it again\n", id)
 		return nil
 	}
@@ -190,7 +206,7 @@ func (s *replicationServer) AppendEntries(ctx context.Context, req *AppendEntrie
 	node.lastHeartbeatTimestamp = time.Now().UnixNano()
 	// end workaround
 	var statuses []*LogEntryReplicationStatus
-	for _, curEntry := range req.Entries {
+	for curIndex, curEntry := range req.Entries {
 		addr, addrErr := node.getGRPCAddressFromID(req.LeaderID)
 		curStatus := LogEntryReplicationStatus{
 			LogEntryID: curEntry.Id,
@@ -205,7 +221,7 @@ func (s *replicationServer) AppendEntries(ctx context.Context, req *AppendEntrie
 			stateMachineClient{
 				clientType: cluster,
 				address:    addr,
-			}, curEntry)
+			}, curEntry, req.PrevLogIndex+int64(curIndex+1))
 		if entryErr != nil {
 			curStatus.Success = false
 			log.Printf("Could not add log entry because of error \n\t%s", entryErr.Error())
@@ -245,16 +261,25 @@ func (node *Node) commitUpToIndex(index int64) error {
 
 // addLogEntry inserts an entry into the log. The function is also responsible for saving the source address
 // in memory (if the current node is a leader)
-func (node *Node) addLogEntry(sourceAddress stateMachineClient, entry *LogEntry) error {
+func (node *Node) addLogEntry(sourceAddress stateMachineClient, entry *LogEntry, index int64) error {
 	curTerm, curTermErr := node.getCurrentTerm()
 	if curTermErr != nil {
 		return curTermErr
 	}
 
-	_, inErr := node.metaDB.RunRawWriteQuery(`INSERT INTO log (id, term, committed, command)
-		VALUES ($1, $2, $3, $4)`, entry.Id, curTerm, 0, entry.Command)
-	if inErr != nil {
-		return inErr
+	switch index {
+	case -1:
+		_, inErr := node.metaDB.RunRawWriteQuery(`INSERT INTO log (id, idx, term, committed, command)
+		VALUES ($1, (SELECT IFNULL(MAX(idx), 0) + 1 FROM log), $2, $3, $4)`, entry.Id, curTerm, 0, entry.Command)
+		if inErr != nil {
+			return inErr
+		}
+	default:
+		_, inErr := node.metaDB.RunRawWriteQuery(`INSERT INTO log (id, idx, term, committed, command)
+		VALUES ($1, $2, $3, $4, $5)`, entry.Id, index, curTerm, 0, entry.Command)
+		if inErr != nil {
+			return inErr
+		}
 	}
 
 	// Register the source address so that the command output will be sent back to it whenever the command

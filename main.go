@@ -111,7 +111,6 @@ func initTCPServer(raftNode *raft.Node, nodeIndex int, config *configuration.Con
 		client.Send(ansiLogo + "Connected to node " + strconv.Itoa(nodeIndex) + "\n\n")
 	})
 	tcpServer.OnNewMessage(func(client *tcp_server.Client, message string) {
-		client.Send("Got " + message)
 		raftNode.IngestCommand(newClusterClientTCP(client), message)
 	})
 	tcpServer.OnClientConnectionClosed(func(client *tcp_server.Client, err error) {

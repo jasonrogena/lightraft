@@ -35,7 +35,7 @@ func (s *proxyServer) ReceiveEntry(ctx context.Context, req *ReceiveEntryRequest
 		stateMachineClient{
 			clientType: cluster,
 			address:    req.ForwardOutputToAddress,
-		}, req.Entry)
+		}, req.Entry, -1)
 }
 
 // ReceiveCommitOutput is an implementation of the receive commit output method in the gRPC proxy server.

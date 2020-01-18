@@ -126,23 +126,23 @@ func (node *Node) getID() string {
 
 // initMetaDB initializes the meta database (where the non-volatile data for the node, including the log, are stored)
 func initMetaDB(config *configuration.Config, nodeIndex int) (*persistence.Driver, error) {
-	dbPath := config.Cluster.Name + "-" + strconv.Itoa(nodeIndex) + "-meta" + persistence.EXTENSION
+	dbPath := config.Cluster.Name + "-" + strconv.Itoa(nodeIndex) + ".meta" + persistence.EXTENSION
 	metaDB, metaDBErr := persistence.NewDriver(dbPath)
 	if metaDBErr != nil {
 		return nil, metaDBErr
 	}
 
 	_, nodeErr := metaDB.RunWriteQuery(`CREATE TABLE IF NOT EXISTS node (
-		idx INTEGER PRIMARY KEY,
+		idx INTEGER PRIMARY KEY AUTOINCREMENT,
 		currentTerm INTEGER,
 		votedFor TEXT)`)
 	if nodeErr != nil {
-		return nil, nodeErr
+		return nil, fmt.Errorf("Could not create the node table: %w", nodeErr)
 	}
 	_, inNodeErr := metaDB.RunWriteQuery(`INSERT OR IGNORE INTO node(idx, currentTerm)
 	VALUES ($1, $2)`, nodeIndex, 0)
 	if inNodeErr != nil {
-		return nil, inNodeErr
+		return nil, fmt.Errorf("Could not insert the default term into the node table: %w", inNodeErr)
 	}
 
 	_, logErr := metaDB.RunWriteQuery(`CREATE TABLE IF NOT EXISTS log (
@@ -153,7 +153,7 @@ func initMetaDB(config *configuration.Config, nodeIndex int) (*persistence.Drive
 		command TEXT NOT NULL,
 		UNIQUE(idx, term) ON CONFLICT ROLLBACK)`)
 	if logErr != nil {
-		return nil, logErr
+		return nil, fmt.Errorf("Could not create the log table: %w", logErr)
 	}
 
 	return metaDB, nil
@@ -184,7 +184,12 @@ func (node *Node) getCurrentTerm() (int64, error) {
 		return -1, fmt.Errorf("Was expecting 1 row of node data, but %d returned", len(dataC))
 	}
 
-	return *dataC[0][0].(*int64), nil
+	dataAsserted, dataOK := dataC[0][0].(*int64)
+	if !dataOK {
+		return -1, fmt.Errorf("Could not convert %v to *int64 while getting current term", dataC[0][0])
+	}
+
+	return *dataAsserted, nil
 }
 
 func (node *Node) setVotedFor(leaderID string) error {
@@ -212,7 +217,12 @@ func (node *Node) getVotedFor() (string, error) {
 		return "", fmt.Errorf("Was expecting 1 row of node data, but %d returned", len(dataC))
 	}
 
-	return *dataC[0][0].(*string), nil
+	dataAsserted, dataOK := dataC[0][0].(*string)
+	if !dataOK {
+		return "", fmt.Errorf("Could not convert %v to *string while getting ID for node that was voted for", dataC[0][0])
+	}
+
+	return *dataAsserted, nil
 }
 
 // RegisterGRPCHandlers adds handlers to the provided gRPC server
@@ -311,7 +321,7 @@ func (node *Node) IngestCommand(client Client, command string) {
 				clientType: tcp,
 				address:    client,
 			},
-			entry)
+			entry, -1)
 		if addEntryErr != nil {
 			node.sendErrorToTCPClient(client, addEntryErr)
 			return
@@ -368,14 +378,24 @@ func (node *Node) generateEntryID() string {
 		b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
-// getLastLogEntryDetails returns the details of the last log in
+// getLastLogEntryDetails returns the details of the last log entry before the provided index in
 // this order:
 //   - index
 //   - term
-func (node *Node) getLastLogEntryDetails() (int64, int64, error) {
-	data, dataErr := node.metaDB.RunSelectQuery(`SELECT idx, term FROM log ORDER BY idx DESC LIMIT 1`, false)
+//
+// Set beforeIndex to -1 if you want the last entry in the log
+func (node *Node) getLastLogEntryDetails(beforeIndex int64) (int64, int64, error) {
+	var data interface{}
+	var dataErr error
+	switch beforeIndex {
+	case -1:
+		data, dataErr = node.metaDB.RunSelectQuery(`SELECT idx, term FROM log ORDER BY idx DESC LIMIT 1`, false)
+	default:
+		data, dataErr = node.metaDB.RunSelectQuery(`SELECT idx, term FROM log WHERE idx < $1 ORDER BY idx DESC LIMIT 1`, false, beforeIndex)
+	}
+
 	if dataErr != nil {
-		return -1, -1, dataErr
+		return -1, -1, fmt.Errorf("Could not ge the index and term from the log in getLastLogEntryDetails. Value of ceiling is %d: %w", beforeIndex, dataErr)
 	}
 
 	dataC := data.([][]interface{})
@@ -383,7 +403,17 @@ func (node *Node) getLastLogEntryDetails() (int64, int64, error) {
 	case 0:
 		return 0, 0, nil
 	case 1:
-		return *dataC[0][0].(*int64), *dataC[0][1].(*int64), nil
+		indexAsserted, indexOK := dataC[0][0].(*int64)
+		if !indexOK {
+			return -1, -1, fmt.Errorf("Could not convert %v to *int64 while getting the last log entry index", dataC[0][0])
+		}
+
+		termAsserted, termOK := dataC[0][1].(*int64)
+		if !termOK {
+			return -1, -1, fmt.Errorf("Could not convert %v to *int64 while getting the last log entry term", dataC[0][1])
+		}
+
+		return *indexAsserted, *termAsserted, nil
 	default:
 		return -1, -1, fmt.Errorf("Was expecting 1 row of node data, but %d returned", len(dataC))
 	}
@@ -400,7 +430,12 @@ func (node *Node) getLastCommittedLogEntryIndex() (int64, error) {
 	case 0:
 		return 0, nil
 	case 1:
-		return *dataC[0][0].(*int64), nil
+		dataAsserted, dataOK := dataC[0][0].(*int64)
+		if !dataOK {
+			return -1, fmt.Errorf("Could not convert %v to *int64 while getting the last committed log entry details", dataC[0][0])
+		}
+
+		return *dataAsserted, nil
 	default:
 		return -1, fmt.Errorf("Was expecting 1 row of node data, but %d returned", len(dataC))
 	}
@@ -427,7 +462,7 @@ func (node *Node) sendCommandOutputToClient(entryID string, output string, succe
 			return fmt.Errorf("Could not connect to client to deliver response")
 		}
 
-		tcpClient.WriteOutput(output, success)
+		tcpClient.WriteOutput(output+"\n", success)
 
 		return nil
 	case cluster:

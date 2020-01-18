@@ -69,7 +69,7 @@ func (node *Node) startElection() {
 	node.registerVote(newTerm)
 
 	// Request for votes in parallel from other nodes
-	lastLogIndex, lastLogTerm, lastLogErr := node.getLastLogEntryDetails()
+	lastLogIndex, lastLogTerm, lastLogErr := node.getLastLogEntryDetails(-1)
 	if lastLogErr != nil {
 		log.Fatalf(lastLogErr.Error())
 		return
@@ -213,7 +213,7 @@ func (node *Node) registerLeader(nodeID string, term int64) error {
 }
 
 func (node *Node) isCandidateUpToDate(voteReq *VoteRequest) (bool, error) {
-	nodeLastLogIndex, nodeLastLogTerm, nodeLastLogErr := node.getLastLogEntryDetails()
+	nodeLastLogIndex, nodeLastLogTerm, nodeLastLogErr := node.getLastLogEntryDetails(-1)
 	if nodeLastLogErr != nil {
 		log.Fatalf(nodeLastLogErr.Error())
 		return false, nodeLastLogErr

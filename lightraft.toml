@@ -21,4 +21,4 @@ rpcBindPort = 56455
 
 [driver]
 name = "sqlite"
-pathPrefix = "lighraft-data"
+pathPrefix = "lighraft"
