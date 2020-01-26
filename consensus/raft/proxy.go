@@ -70,12 +70,15 @@ func (node *Node) forwardEntry(leaderAddr string, tcpClient Client, entry *LogEn
 		return addrErr
 	}
 
-	node.registerStateMachineClient(
+	regClientErr := node.registerStateMachineClient(
 		stateMachineClient{
 			clientType: tcp,
 			address:    tcpClient,
 		},
 		entry.Id)
+	if regClientErr != nil {
+		return regClientErr
+	}
 
 	_, respErr := grpcClient.ReceiveEntry(ctx, &ReceiveEntryRequest{
 		Entry:                  entry,

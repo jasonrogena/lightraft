@@ -39,7 +39,7 @@ func (node *Node) stopHeartbeatTimer() bool {
 
 func (node *Node) sendHeartbeat() {
 	node.sendEntriesToAllNodes(make([]*LogEntry, 0))
-	log.Println("Heartbeat sent")
+	//log.Println("Heartbeat sent")
 }
 
 func (node *Node) getHeartbeatTimeoutDuration() uint64 {
@@ -116,15 +116,15 @@ func (node *Node) sendEntriesToAllNodes(entries []*LogEntry) error {
 // it turns out that more than half of the nodes have successfully recorded the entry
 func (node *Node) recordAppendEntryResponse(entryStatuses []*LogEntryReplicationStatus) {
 	for _, curStatus := range entryStatuses {
-		_, statusOk := node.recordedLogEntries[curStatus.LogEntryID]
-		if !statusOk {
+		state, stateOK := node.logEntryStates[curStatus.LogEntryID]
+		if !stateOK {
 			log.Printf("Could not record entry with ID %s was recorded in follower because count of number of records for this entry doesn't exist\n", curStatus.LogEntryID)
 			continue
 		}
 
-		node.recordedLogEntries[curStatus.LogEntryID] = node.recordedLogEntries[curStatus.LogEntryID] + 1
+		state.incrementNumberNodesWithEntry()
 
-		if !node.isValueGreaterThanHalfNodes(node.recordedLogEntries[curStatus.LogEntryID]) {
+		if !node.isValueGreaterThanHalfNodes(state.getNumberNodesWithEntry()) {
 			continue
 		}
 
@@ -141,19 +141,28 @@ func (node *Node) recordAppendEntryResponse(entryStatuses []*LogEntryReplication
 }
 
 func (node *Node) commitLogEntry(id string) error {
+	state, stateOK := node.logEntryStates[id]
+	if !stateOK {
+		return fmt.Errorf("Could not get the state details for log entry with ID '%s'. Cannot commit entry", id)
+	}
+
+	state.commitLock.Lock()
+	defer state.commitLock.Unlock()
+	log.Printf("Checking if we can commit log entry with ID '%s'\n", id)
+
 	// Check if entry has already been committed
 	data, dataErr := node.metaDB.RunSelectQuery(`SELECT committed, command FROM log WHERE id = $1`, false, id)
 	if dataErr != nil {
-		return fmt.Errorf("Error occurred when checking if log entry with id '%s' is committed: %w", id, dataErr)
+		return fmt.Errorf("Error occurred when checking if log entry with ID '%s' is committed: %w", id, dataErr)
 	}
 
 	dataC := data.([][]interface{})
 	if len(dataC) != 1 {
-		return fmt.Errorf("Was expecting 1 row of log entry data for entry with id '%s', but %d returned", id, len(dataC))
+		return fmt.Errorf("Was expecting 1 row of log entry data for entry with ID '%s', but %d returned", id, len(dataC))
 	}
 
 	if *dataC[0][0].(*int64) == 1 {
-		log.Printf("Log entry with id '%s' already committed, not commiting it again\n", id)
+		log.Printf("Log entry with ID '%s' already committed, not commiting it again\n", id)
 		return nil
 	}
 
@@ -166,6 +175,8 @@ func (node *Node) commitLogEntry(id string) error {
 	}
 
 	_, updateCommitError := node.metaDB.RunWriteQuery(`UPDATE log SET committed = 1 WHERE id = $1`, id)
+
+	log.Printf("Finishing commit sequence for log entry with ID '%s'\n", id)
 
 	return updateCommitError
 }
@@ -262,6 +273,10 @@ func (node *Node) commitUpToIndex(index int64) error {
 // addLogEntry inserts an entry into the log. The function is also responsible for saving the source address
 // in memory (if the current node is a leader)
 func (node *Node) addLogEntry(sourceAddress stateMachineClient, entry *LogEntry, index int64) error {
+	node.logEntryStates[entry.Id] = &logEntryState{
+		numberNodesWithEntry: 0,
+	}
+
 	curTerm, curTermErr := node.getCurrentTerm()
 	if curTermErr != nil {
 		return curTermErr
@@ -285,8 +300,13 @@ func (node *Node) addLogEntry(sourceAddress stateMachineClient, entry *LogEntry,
 	// Register the source address so that the command output will be sent back to it whenever the command
 	// is executed in the state machine
 	if node.state == LEADER {
-		node.registerStateMachineClient(sourceAddress, entry.Id)
+		regClientErr := node.registerStateMachineClient(sourceAddress, entry.Id)
+		if regClientErr != nil {
+			return regClientErr
+		}
 	}
+
+	node.logEntryStates[entry.Id].incrementNumberNodesWithEntry()
 
 	return nil
 }

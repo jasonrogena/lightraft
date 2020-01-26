@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jasonlvhit/gocron"
@@ -70,9 +71,30 @@ type Node struct {
 	candidateTermVote      map[int64]string // Map of terms and IDs of candidates that this node voted for in each of the terms. ID will be nil if node hasn't voted
 	termVoteCount          map[int64]int    // Map of terms and number of votes this node got for each of the terms
 	config                 *configuration.Config
-	entryClients           map[string]stateMachineClient
 	metaDB                 *persistence.Driver
-	recordedLogEntries     map[string]int
+	logEntryStates         map[string]*logEntryState
+}
+
+// LogEntryState is for storing the volatile state of a log entry
+type logEntryState struct {
+	commitLock               sync.Mutex // Mutual exclusion locks corresponding to each of the entries to be used when committing the log entry to the state machine
+	client                   stateMachineClient
+	numberNodesWithEntry     int
+	numberNodesWithEntryLock sync.Mutex
+}
+
+func (state *logEntryState) incrementNumberNodesWithEntry() {
+	state.numberNodesWithEntryLock.Lock()
+	state.numberNodesWithEntry = state.numberNodesWithEntry + 1
+	state.numberNodesWithEntryLock.Unlock()
+}
+
+func (state *logEntryState) getNumberNodesWithEntry() int {
+	state.numberNodesWithEntryLock.Lock()
+	number := state.numberNodesWithEntry
+	state.numberNodesWithEntryLock.Unlock()
+
+	return number
 }
 
 // stateMachineClient holds the details of a client from where
@@ -114,8 +136,7 @@ func NewNode(index int, config *configuration.Config, stateMachine consensus.Sta
 	node.setState(FOLLOWER)
 	node.candidateTermVote = make(map[int64]string)
 	node.termVoteCount = make(map[int64]int)
-	node.entryClients = make(map[string]stateMachineClient)
-	node.recordedLogEntries = make(map[string]int)
+	node.logEntryStates = make(map[string]*logEntryState)
 
 	return node, nil
 }
@@ -327,7 +348,6 @@ func (node *Node) IngestCommand(client Client, command string) {
 			return
 		}
 
-		node.recordedLogEntries[entry.Id] = 1
 		sendEntryErr := node.sendEntriesToAllNodes([]*LogEntry{entry})
 		if sendEntryErr != nil {
 			node.sendErrorToTCPClient(client, sendEntryErr)
@@ -444,20 +464,26 @@ func (node *Node) getLastCommittedLogEntryIndex() (int64, error) {
 // registerStateMachineClient records the client that sent the log entry with the provided ID
 // for the purposes of sending the command output when the log entry is committed to the state
 // machine
-func (node *Node) registerStateMachineClient(client stateMachineClient, logEntryID string) {
-	node.entryClients[logEntryID] = client
+func (node *Node) registerStateMachineClient(client stateMachineClient, logEntryID string) error {
+	state, stateOK := node.logEntryStates[logEntryID]
+	if !stateOK {
+		return fmt.Errorf("Could not find state data for log entry with id '%s'. Cannot record the state machine client", logEntryID)
+	}
+
+	state.client = client
+	return nil
 }
 
 func (node *Node) sendCommandOutputToClient(entryID string, output string, success bool) error {
-	client, clientOk := node.entryClients[entryID]
+	state, stateOK := node.logEntryStates[entryID]
 
-	if !clientOk {
+	if !stateOK {
 		return fmt.Errorf("Could not connect to client to deliver response")
 	}
 
-	switch client.clientType {
+	switch state.client.clientType {
 	case tcp:
-		tcpClient := client.address.(Client)
+		tcpClient := state.client.address.(Client)
 		if !tcpClient.IsValid() {
 			return fmt.Errorf("Could not connect to client to deliver response")
 		}
@@ -466,7 +492,7 @@ func (node *Node) sendCommandOutputToClient(entryID string, output string, succe
 
 		return nil
 	case cluster:
-		forwardErr := node.forwardCommitOutput(client.address.(string), entryID, output, success)
+		forwardErr := node.forwardCommitOutput(state.client.address.(string), entryID, output, success)
 		return forwardErr
 	default:
 		return fmt.Errorf("Could not send back response to client because its type is unknown")
