@@ -384,7 +384,7 @@ func (node *Node) IngestCommand(client Client, command string) {
 
 func (node *Node) sendErrorToTCPClient(client Client, err error) {
 	if client.IsValid() {
-		client.WriteOutput(err.Error(), false)
+		client.WriteOutput(strings.TrimRight(err.Error(), "\n")+"\n", false)
 	}
 }
 
@@ -486,6 +486,11 @@ func (node *Node) sendCommandOutputToClient(entryID string, output string, succe
 		tcpClient := state.client.address.(Client)
 		if !tcpClient.IsValid() {
 			return fmt.Errorf("Could not connect to client to deliver response")
+		}
+		output = strings.Trim(output, "\n")
+
+		if len(output) == 0 {
+			return nil
 		}
 
 		tcpClient.WriteOutput(output+"\n", success)

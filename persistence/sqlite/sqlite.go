@@ -128,6 +128,7 @@ func (driver *Driver) RunSelectQuery(query string, resultAsSingleString bool, ar
 		table.SetHeader(columnNames)
 		table.AppendBulk(resultAsStrings)
 		table.SetAlignment(tablewriter.ALIGN_LEFT)
+		table.SetAutoFormatHeaders(false)
 		table.Render()
 
 		return buf.String(), nil
