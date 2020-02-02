@@ -168,11 +168,8 @@ func (node *Node) commitLogEntry(id string) error {
 
 	// Send command to state machine
 	output, outputErr := node.stateMachine.Commit(*dataC[0][1].(*string))
-
-	node.sendCommandOutputToClient(id, output, true)
-	if outputErr != nil {
-		node.sendCommandOutputToClient(id, outputErr.Error(), false)
-	}
+	formattedOutput, outputOK := node.formatOutputToClient(output, outputErr)
+	node.sendCommandOutputToClient(id, formattedOutput, outputOK)
 
 	_, updateCommitError := node.metaDB.RunWriteQuery(`UPDATE log SET committed = 1 WHERE id = $1`, id)
 

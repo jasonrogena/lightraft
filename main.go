@@ -81,10 +81,21 @@ func newClusterClientTCP(tcpClient *tcp_server.Client) *ClusterClientTCP {
 }
 
 func (client *ClusterClientTCP) WriteOutput(message string, success bool) {
+	defer client.ResetConsole()
+
+	message = strings.Trim(message, "\n")
+	if len(message) == 0 {
+		return
+	}
+
 	if !success {
 		message = color.RedString(message)
 	}
 	client.tcpClient.Send(message)
+}
+
+func (client *ClusterClientTCP) ResetConsole() {
+	client.tcpClient.Send("\n" + cliPrefix + " ")
 }
 
 func (client *ClusterClientTCP) IsValid() bool {
@@ -108,17 +119,22 @@ func initGRPCServer(raftNode *raft.Node, nodeIndex int, config *configuration.Co
 func initTCPServer(raftNode *raft.Node, nodeIndex int, config *configuration.Config) {
 	tcpServer := tcp_server.New(config.Nodes[nodeIndex].ClientBindAddress + ":" + strconv.Itoa(config.Nodes[nodeIndex].ClientBindPort))
 	tcpServer.OnNewClient(func(client *tcp_server.Client) {
+		clusterClient := newClusterClientTCP(client)
+		defer clusterClient.ResetConsole()
+
 		// new client connected
-		client.Send(ansiLogo + "Connected to node " + strconv.Itoa(nodeIndex) + "\n\n")
+		client.Send(ansiLogo + "Connected to node " + strconv.Itoa(nodeIndex) + "\n")
 	})
 	tcpServer.OnNewMessage(func(client *tcp_server.Client, message string) {
+		clusterClient := newClusterClientTCP(client)
 		message = cleanMessage(message)
 		if len(message) == 0 {
 			log.Println("Not processing blank message")
+			clusterClient.ResetConsole()
 			return
 		}
 
-		raftNode.IngestCommand(newClusterClientTCP(client), message)
+		raftNode.IngestCommand(clusterClient, message)
 	})
 	tcpServer.OnClientConnectionClosed(func(client *tcp_server.Client, err error) {
 		// connection with client lost
@@ -160,3 +176,5 @@ var ansiLogo = `
 ║  ││ ┬├─┤ │ ├┬┘├─┤├┤  │ 
 ╩═╝┴└─┘┴ ┴ ┴ ┴└─┴ ┴└   ┴ 
 `
+
+var cliPrefix = "lightraft=#"

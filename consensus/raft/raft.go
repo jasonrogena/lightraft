@@ -331,11 +331,7 @@ func (node *Node) setState(newState State) error {
 func (node *Node) IngestCommand(client Client, command string) {
 	if !node.stateMachine.RequiresConsensus(command) {
 		output, outputErr := node.stateMachine.Commit(command)
-
-		client.WriteOutput(output, true)
-		if outputErr != nil {
-			node.sendErrorToTCPClient(client, outputErr)
-		}
+		node.sendMessageToTCPClient(client, output, outputErr)
 
 		return
 	}
@@ -355,37 +351,49 @@ func (node *Node) IngestCommand(client Client, command string) {
 			},
 			entry, -1)
 		if addEntryErr != nil {
-			node.sendErrorToTCPClient(client, addEntryErr)
+			node.sendMessageToTCPClient(client, "", addEntryErr)
 			return
 		}
 
 		sendEntryErr := node.sendEntriesToAllNodes([]*LogEntry{entry})
 		if sendEntryErr != nil {
-			node.sendErrorToTCPClient(client, sendEntryErr)
+			node.sendMessageToTCPClient(client, "", sendEntryErr)
 			return
 		}
 	case FOLLOWER:
 		leaderAddr, leaderAddrErr := node.getLeaderGRPCAddress()
 		if leaderAddrErr != nil {
-			node.sendErrorToTCPClient(client, leaderAddrErr)
+			node.sendMessageToTCPClient(client, "", leaderAddrErr)
 			return
 		}
 
 		forwardErr := node.forwardEntry(leaderAddr, client, entry)
 		if forwardErr != nil {
-			node.sendErrorToTCPClient(client, forwardErr)
+			node.sendMessageToTCPClient(client, "", forwardErr)
 			return
 		}
 	default:
-		node.sendErrorToTCPClient(client, fmt.Errorf("Node not in a state able to accept commands"))
+		node.sendMessageToTCPClient(client, "", fmt.Errorf("Node not in a state able to accept commands"))
 		return
 	}
 }
 
-func (node *Node) sendErrorToTCPClient(client Client, err error) {
-	if client.IsValid() {
-		client.WriteOutput(strings.TrimRight(err.Error(), "\n")+"\n", false)
+func (node *Node) sendMessageToTCPClient(client Client, message string, err error) {
+	if !client.IsValid() {
+		return
 	}
+
+	client.WriteOutput(node.formatOutputToClient(message, err))
+}
+
+func (node *Node) formatOutputToClient(message string, err error) (string, bool) {
+	messageOK := true
+	if err != nil {
+		message = message + "\n" + err.Error()
+		messageOK = false
+	}
+
+	return message, messageOK
 }
 
 func (node *Node) generateEntryID() string {
@@ -487,13 +495,8 @@ func (node *Node) sendCommandOutputToClient(entryID string, output string, succe
 		if !tcpClient.IsValid() {
 			return fmt.Errorf("Could not connect to client to deliver response")
 		}
-		output = strings.Trim(output, "\n")
 
-		if len(output) == 0 {
-			return nil
-		}
-
-		tcpClient.WriteOutput(output+"\n", success)
+		tcpClient.WriteOutput(output, success)
 
 		return nil
 	case cluster:
