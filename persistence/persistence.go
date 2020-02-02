@@ -29,7 +29,7 @@ func NewDatabase(config *configuration.Config, nodeIndex int) (*Database, error)
 	return database, fmt.Errorf("Could not find database with driver name set to %s", config.Driver.Name)
 }
 
-func (db *Database) ShouldForwardToLeader(command string) bool {
+func (db *Database) RequiresConsensus(command string) bool {
 	return db.driver.IsQueryWrite(command)
 }
 

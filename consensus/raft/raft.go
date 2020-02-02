@@ -329,6 +329,17 @@ func (node *Node) setState(newState State) error {
 }
 
 func (node *Node) IngestCommand(client Client, command string) {
+	if !node.stateMachine.RequiresConsensus(command) {
+		output, outputErr := node.stateMachine.Commit(command)
+
+		client.WriteOutput(output, true)
+		if outputErr != nil {
+			node.sendErrorToTCPClient(client, outputErr)
+		}
+
+		return
+	}
+
 	id := node.generateEntryID()
 	entry := &LogEntry{
 		Id:      id,
@@ -354,17 +365,6 @@ func (node *Node) IngestCommand(client Client, command string) {
 			return
 		}
 	case FOLLOWER:
-		if !node.stateMachine.ShouldForwardToLeader(command) {
-			output, outputErr := node.stateMachine.Commit(command)
-
-			client.WriteOutput(output, true)
-			if outputErr != nil {
-				node.sendErrorToTCPClient(client, outputErr)
-			}
-
-			return
-		}
-
 		leaderAddr, leaderAddrErr := node.getLeaderGRPCAddress()
 		if leaderAddrErr != nil {
 			node.sendErrorToTCPClient(client, leaderAddrErr)
