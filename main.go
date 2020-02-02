@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/fatih/color"
 	"github.com/firstrow/tcp_server"
@@ -111,6 +112,12 @@ func initTCPServer(raftNode *raft.Node, nodeIndex int, config *configuration.Con
 		client.Send(ansiLogo + "Connected to node " + strconv.Itoa(nodeIndex) + "\n\n")
 	})
 	tcpServer.OnNewMessage(func(client *tcp_server.Client, message string) {
+		message = cleanMessage(message)
+		if len(message) == 0 {
+			log.Println("Not processing blank message")
+			return
+		}
+
 		raftNode.IngestCommand(newClusterClientTCP(client), message)
 	})
 	tcpServer.OnClientConnectionClosed(func(client *tcp_server.Client, err error) {
@@ -128,6 +135,13 @@ func getGRPCServerUnaryInterceptor(raftNode *raft.Node) grpc.ServerOption {
 		ctx = context.WithValue(ctx, raft.NAME, raftNode)
 		return handler(ctx, req)
 	})
+}
+
+func cleanMessage(message string) string {
+	message = strings.TrimRight(message, "\n")
+	message = strings.TrimSpace(message)
+
+	return message
 }
 
 func getHelp() string {
