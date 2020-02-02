@@ -103,17 +103,19 @@ func (driver *Driver) RunSelectQuery(query string, resultAsSingleString bool, ar
 			}
 		}
 
-		for curIndex, curColumnType := range columnTypes {
+		for _, curColumnType := range columnTypes {
 			result[rowIndex] = append(result[rowIndex], driver.getColumnCarrier(curColumnType, resultAsSingleString))
-
-			if resultAsSingleString {
-				resultAsStrings[rowIndex] = append(resultAsStrings[rowIndex], result[rowIndex][curIndex].(string))
-			}
 		}
 
 		scanErr := rows.Scan(result[rowIndex]...)
 		if scanErr != nil {
 			return nil, scanErr
+		}
+
+		if resultAsSingleString {
+			for curIndex := range columnTypes {
+				resultAsStrings[rowIndex] = append(resultAsStrings[rowIndex], *result[rowIndex][curIndex].(*string))
+			}
 		}
 
 		rowIndex++
