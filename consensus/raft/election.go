@@ -184,6 +184,7 @@ func (node *Node) registerVote(term int64) error {
 }
 
 // registerLeader registers the provided node ID as the leader in this node
+// TODO: In Raft, how does a node reconcile logs with the leader once one is elected?
 func (node *Node) registerLeader(nodeID string, term int64) error {
 	currentTerm, currentTermErr := node.getCurrentTerm()
 	if currentTermErr != nil {
@@ -212,6 +213,10 @@ func (node *Node) registerLeader(nodeID string, term int64) error {
 	return nil
 }
 
+// TODO: Test using 5.4.1 (Election restriction): "Raft determines which of two logs is more up-to-date
+// by comparing the index and term of the last entries in the logs. If the logs have last entries with different
+// terms, then the log with the later term is more up-to-date. IF the logs end with the same term, then whichever
+// log is longer is more up-to-date."
 func (node *Node) isCandidateUpToDate(voteReq *VoteRequest) (bool, error) {
 	nodeLastLogIndex, nodeLastLogTerm, nodeLastLogErr := node.getLastLogEntryDetails(-1)
 	if nodeLastLogErr != nil {
