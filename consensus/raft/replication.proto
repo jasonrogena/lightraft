@@ -25,4 +25,5 @@ message LogEntryReplicationStatus {
 message AppendEntriesResponse {
     repeated LogEntryReplicationStatus entryStatuses = 1;
     int64 term = 2;
+    bool success = 3; // true if follower contained entry matching prevLogIndex and prevLogTerm
 }

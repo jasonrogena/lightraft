@@ -26,16 +26,23 @@ func (s *proxyServer) ReceiveEntry(ctx context.Context, req *ReceiveEntryRequest
 		return resp, errors.New("Could not get data from gRPC server")
 	}
 
-	if node.state != LEADER {
-		currentTerm, _ := node.getCurrentTerm()
-		return resp, errors.New(fmt.Sprintf("Proxied log could not be processed because expected leader is not a leader. Its state is %s and term %d", node.state, currentTerm))
+	curTerm, curTermErr := node.getCurrentTerm()
+	if curTermErr != nil {
+		return resp, fmt.Errorf("Could not add log entry: %w", curTermErr)
 	}
+
+	if node.state != LEADER {
+		return resp, errors.New(fmt.Sprintf("Proxied log could not be processed because expected leader is not a leader. Its state is %s and term %d", node.state, curTerm))
+	}
+
+	// Make sure the term is set to the lead's current term
+	req.Entry.Term = curTerm
 
 	return resp, node.addLogEntry(
 		stateMachineClient{
 			clientType: cluster,
 			address:    req.ForwardOutputToAddress,
-		}, req.Entry, -1)
+		}, req.Entry)
 }
 
 // ReceiveCommitOutput is an implementation of the receive commit output method in the gRPC proxy server.
