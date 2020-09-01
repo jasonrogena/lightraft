@@ -1,8 +1,9 @@
-GOPATH ?= ~/go
-GO111MODULE = on
+export GOPATH ?= ${HOME}/go
+export PATH := ${GOPATH}/bin:${PATH}
+export GO111MODULE = on
 PROTOC_ARCH ?= linux-x86_64
 PROTOC_VERSION ?= 3.10.1
-PATH := ${PATH}:${GOPATH}/bin
+PROTOC_GEN_GO_VERSION ?= v1.3.2
 
 clean:
 	find . -iname *.pb.go -exec rm {} \;
@@ -14,6 +15,7 @@ ${GOPATH}/bin/protoc:
 
 reqs: ${GOPATH}/bin/protoc
 	go mod download
+	go get github.com/golang/protobuf/protoc-gen-go@${PROTOC_GEN_GO_VERSION}
 
 grpcs: reqs clean
 	find . -name *.proto -print0 | xargs -I {} -0 bash -c 'protoc -I=`dirname {}` --go_out=plugins=grpc:`dirname {}` {}'
