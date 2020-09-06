@@ -1,7 +1,7 @@
 ```
 ╦  ┬┌─┐┬ ┬┌┬┐┬─┐┌─┐┌─┐┌┬┐
-║  ││ ┬├─┤ │ ├┬┘├─┤├┤  │ 
-╩═╝┴└─┘┴ ┴ ┴ ┴└─┴ ┴└   ┴ 
+║  ││ ┬├─┤ │ ├┬┘├─┤├┤  │
+╩═╝┴└─┘┴ ┴ ┴ ┴└─┴ ┴└   ┴
 ```
 
 Wraps around SQLite and creates a distributed database. Lightraft uses the [Raft consensus algorithm](https://raft.github.io/) for distributed consensus. This is an experiment, don't use in prod.
@@ -49,3 +49,21 @@ To connect to a running node so that you can start running your SQL queries, run
 ```sh
 telnet <configured node's client bind address> <configured node's client bind port>
 ```
+
+# Using Docker
+
+You can build a docker image:
+
+```sh
+docker build -t mylightcraft .
+```
+
+Run a lightcraft container with:
+
+```
+docker run --rm -it -p 6453:6453 -v /tmp/lightraft.toml:/app/lightraft.toml  mylightraft lightraft 0
+docker run --rm -it -p 6453:6454 -v /tmp/lightraft.toml:/app/lightraft.toml  mylightraft lightraft 1
+docker run --rm -it -p 6453:6455 -v /tmp/lightraft.toml:/app/lightraft.toml  mylightraft lightraft 2
+```
+
+You should provide a modified lightraft.toml via Docker volumes argument and specify the index using the environment variable `NODE_INDEX`.
