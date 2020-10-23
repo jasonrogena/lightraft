@@ -47,5 +47,5 @@ You will need to start all the nodes defined in the configuration file for the c
 To connect to a running node so that you can start running your SQL queries, run:
 
 ```sh
-telnet <configured node's client bind address> <configured node's client bind port>
+nc <configured node's client bind address> <configured node's client bind port>
 ```

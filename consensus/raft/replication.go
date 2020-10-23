@@ -175,6 +175,8 @@ func (node *Node) commitLogEntry(id string) error {
 
 	log.Printf("Finishing commit sequence for log entry with ID '%s'\n", id)
 
+	// TODO: Update node.commitIndex
+
 	return updateCommitError
 }
 
@@ -196,7 +198,8 @@ func (node *Node) sendAppendEntriesRequest(address string, req AppendEntriesRequ
 // AppendEntries is an implementation of the append entries method in the gRPC replication service
 func (s *replicationServer) AppendEntries(ctx context.Context, req *AppendEntriesRequest) (*AppendEntriesResponse, error) {
 	resp := AppendEntriesResponse{
-		Term: req.Term,
+		Term:    req.Term,
+		Success: false,
 	}
 
 	// Extract the node from the context
@@ -205,6 +208,27 @@ func (s *replicationServer) AppendEntries(ctx context.Context, req *AppendEntrie
 		return &resp, errors.New("Could not get data from gRPC server")
 	}
 
+	curTerm, curTermErr := node.getCurrentTerm()
+	if curTermErr != nil {
+		return &resp, fmt.Errorf("Could not determine the term for the node: %w", curTermErr)
+	}
+
+	if req.Term < curTerm {
+		return &resp, fmt.Errorf("The term in the AppendEntries request (%d) is less than the node's term (%d)", req.Term, curTerm)
+	}
+
+	if req.PrevLogIndex > 0 && req.PrevLogTerm > 0 {
+		prevLogEntryStatus, prevLogEntryStatusErr := node.doesLogEntryWithDetailsExist(req.PrevLogIndex, req.PrevLogTerm)
+		if prevLogEntryStatusErr != nil {
+			return &resp, fmt.Errorf("Could not determine if previous log entry exists in node: %w", prevLogEntryStatusErr)
+		}
+
+		if !prevLogEntryStatus {
+			return &resp, fmt.Errorf("Previous log entry with index %d and term %d is not available in node", req.PrevLogIndex, req.PrevLogTerm)
+		}
+	}
+
+	// TODO: should we register the leader at this point?
 	leaderErr := node.registerLeader(req.LeaderID, req.Term)
 	if leaderErr != nil {
 		return &resp, leaderErr
@@ -214,25 +238,49 @@ func (s *replicationServer) AppendEntries(ctx context.Context, req *AppendEntrie
 	node.lastHeartbeatTimestamp = time.Now().UnixNano()
 	// end workaround
 	var statuses []*LogEntryReplicationStatus
-	for curIndex, curEntry := range req.Entries {
-		addr, addrErr := node.getGRPCAddressFromID(req.LeaderID)
+	for _, curEntry := range req.Entries {
 		curStatus := LogEntryReplicationStatus{
 			LogEntryID: curEntry.Id,
 			Success:    true,
 		}
+
+		existingEntry, existingEntryErr := node.getLogEntryWithIndex(curEntry.Index)
+		if existingEntryErr != nil {
+			curStatus.Success = false
+			log.Printf("Could not add log entry because of error: %w", existingEntryErr)
+			break
+		}
+		if len(existingEntry.Id) > 0 {
+			if existingEntry.Term != curEntry.Term { // There's a conflict
+				// Delete the existing entry and all entries that follow it
+				deleteEntryErr := node.deleteLogEntriesFromIndex(curEntry.Index)
+				if deleteEntryErr != nil {
+					curStatus.Success = false
+					log.Printf("Could not add log entry because of error: %w", deleteEntryErr)
+					break
+				}
+			} else { // Entry already exists in log
+				log.Printf("Log entry with index '%d' already exists in log. Not adding it", curEntry.Index)
+				continue
+			}
+		}
+
+		addr, addrErr := node.getGRPCAddressFromID(req.LeaderID)
 		if addrErr != nil {
 			curStatus.Success = false
-			log.Printf("Could not add log entry because of error \n\t%s", addrErr.Error())
+			log.Printf("Could not add log entry because of error: %w", addrErr)
+			break
 		}
 
 		entryErr := node.addLogEntry(
 			stateMachineClient{
 				clientType: cluster,
 				address:    addr,
-			}, curEntry, req.PrevLogIndex+int64(curIndex+1))
+			}, curEntry)
 		if entryErr != nil {
 			curStatus.Success = false
-			log.Printf("Could not add log entry because of error \n\t%s", entryErr.Error())
+			log.Printf("Could not add log entry because of error: %w", entryErr)
+			break
 		}
 
 		statuses = append(statuses, &curStatus)
@@ -245,6 +293,7 @@ func (s *replicationServer) AppendEntries(ctx context.Context, req *AppendEntrie
 	}
 
 	resp.EntryStatuses = statuses
+	resp.Success = true
 	return &resp, nil
 }
 
@@ -269,26 +318,21 @@ func (node *Node) commitUpToIndex(index int64) error {
 
 // addLogEntry inserts an entry into the log. The function is also responsible for saving the source address
 // in memory (if the current node is a leader)
-func (node *Node) addLogEntry(sourceAddress stateMachineClient, entry *LogEntry, index int64) error {
+func (node *Node) addLogEntry(sourceAddress stateMachineClient, entry *LogEntry) error {
 	node.logEntryStates[entry.Id] = &logEntryState{
 		numberNodesWithEntry: 0,
 	}
 
-	curTerm, curTermErr := node.getCurrentTerm()
-	if curTermErr != nil {
-		return curTermErr
-	}
-
-	switch index {
+	switch entry.Index {
 	case -1:
 		_, inErr := node.metaDB.RunRawWriteQuery(`INSERT INTO log (id, idx, term, committed, command)
-		VALUES ($1, (SELECT IFNULL(MAX(idx), 0) + 1 FROM log), $2, $3, $4)`, entry.Id, curTerm, 0, entry.Command)
+		VALUES ($1, (SELECT IFNULL(MAX(idx), 0) + 1 FROM log), $2, $3, $4)`, entry.Id, entry.Term, 0, entry.Command)
 		if inErr != nil {
 			return inErr
 		}
 	default:
 		_, inErr := node.metaDB.RunRawWriteQuery(`INSERT INTO log (id, idx, term, committed, command)
-		VALUES ($1, $2, $3, $4, $5)`, entry.Id, index, curTerm, 0, entry.Command)
+		VALUES ($1, $2, $3, $4, $5)`, entry.Id, entry.Index, entry.Term, 0, entry.Command)
 		if inErr != nil {
 			return inErr
 		}

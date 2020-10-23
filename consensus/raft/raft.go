@@ -75,7 +75,7 @@ type Node struct {
 	logEntryStates         map[string]*logEntryState
 }
 
-// LogEntryState is for storing the volatile state of a log entry
+// logEntryState is for storing the volatile state of a log entry
 type logEntryState struct {
 	commitLock               sync.Mutex // Mutual exclusion locks corresponding to each of the entries to be used when committing the log entry to the state machine
 	client                   stateMachineClient
@@ -340,16 +340,24 @@ func (node *Node) IngestCommand(client Client, command string) {
 	entry := &LogEntry{
 		Id:      id,
 		Command: command,
+		Index:   -1,
 	}
 
 	switch node.state {
 	case LEADER:
+		curTerm, curTermErr := node.getCurrentTerm()
+		if curTermErr != nil {
+			node.sendMessageToTCPClient(client, "", curTermErr)
+			return
+		}
+		entry.Term = curTerm
+
 		addEntryErr := node.addLogEntry(
 			stateMachineClient{
 				clientType: tcp,
 				address:    client,
 			},
-			entry, -1)
+			entry)
 		if addEntryErr != nil {
 			node.sendMessageToTCPClient(client, "", addEntryErr)
 			return
@@ -445,6 +453,92 @@ func (node *Node) getLastLogEntryDetails(beforeIndex int64) (int64, int64, error
 	default:
 		return -1, -1, fmt.Errorf("Was expecting 1 row of node data, but %d returned", len(dataC))
 	}
+}
+
+// doesLogEntryWithIDExist checks whether a log entry with the provided index and
+// term exists.
+func (node *Node) doesLogEntryWithDetailsExist(index int64, term int64) (bool, error) {
+	data, dataErr := node.metaDB.RunSelectQuery(`SELECT * FROM log WHERE idx = $1 AND term = $2`, false, index, term)
+	if dataErr != nil {
+		return false, dataErr
+	}
+
+	dataC := data.([][]interface{})
+	if len(dataC) > 1 {
+		return false, fmt.Errorf("More than one log entry with the index %d and term %d", index, term)
+	}
+
+	return len(dataC) == 1, nil
+}
+
+// getLogEntryWithIndex returns a log entry if found in the database, otherwise an empty
+// LogEntry object is returned. Check if the log entry's ID is empty to determine if the
+// entry is blank or not.
+func (node *Node) getLogEntryWithIndex(index int64) (LogEntry, error) {
+	var entry LogEntry
+
+	data, dataErr := node.metaDB.RunSelectQuery(`SELECT id, idx, term, committed, command from log WHERE idx = $1`, false, index)
+	if dataErr != nil {
+		return entry, dataErr
+	}
+
+	dataC := data.([][]interface{})
+	if len(dataC) == 0 {
+		return entry, nil
+	} else if len(dataC) > 1 {
+		return entry, fmt.Errorf("More than one log entry exists with index '%d'", index)
+	}
+
+	curRow := dataC[0]
+
+	id, idOK := curRow[0].(*string)
+	if !idOK {
+		return entry, fmt.Errorf("Could not extract log entry id from query response for entry exists with index '%d'", index)
+	}
+	entry.Id = *id
+
+	idx, idxOK := curRow[1].(*int64)
+	if !idxOK {
+		return entry, fmt.Errorf("Could not extract log entry index from query response for entry exists with index '%d'", index)
+	}
+	entry.Index = *idx
+
+	term, termOK := curRow[2].(*int64)
+	if !termOK {
+		return entry, fmt.Errorf("Could not extract log entry term from query response for entry exists with index '%d'", index)
+	}
+	entry.Term = *term
+
+	committed, committedOK := curRow[3].(*int)
+	if !committedOK {
+		return entry, fmt.Errorf("Could not extract log entry committed status from query response for entry exists with index '%d'", index)
+	}
+	entry.Committed = *committed == 1
+
+	command, commandOK := curRow[4].(*string)
+	if !commandOK {
+		return entry, fmt.Errorf("Could not extract log entry command from query response for entry exists with index '%d'", index)
+	}
+	entry.Command = *command
+
+	return entry, nil
+}
+
+func (node *Node) deleteLogEntriesFromIndex(index int64) error {
+	// Check if index has already been committed
+	data, dataErr := node.metaDB.RunSelectQuery(`SELECT * FROM log WHERE idx = $1 AND committed = 1`, false, index)
+	if dataErr != nil {
+		return dataErr
+	}
+	dataC := data.([][]interface{})
+	if len(dataC) > 0 {
+		return fmt.Errorf("Could not delete log entry with index '%d' and all entries that follow it because it is already committed", index)
+	}
+
+	// Delete the log entry
+	_, deleteErr := node.metaDB.RunWriteQuery(`DELETE FROM log WHERE idx >= $1`, index)
+
+	return deleteErr
 }
 
 func (node *Node) getLastCommittedLogEntryIndex() (int64, error) {
