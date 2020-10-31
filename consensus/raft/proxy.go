@@ -26,19 +26,7 @@ func (s *proxyServer) ReceiveEntry(ctx context.Context, req *ReceiveEntryRequest
 		return resp, errors.New("Could not get data from gRPC server")
 	}
 
-	curTerm, curTermErr := node.getCurrentTerm()
-	if curTermErr != nil {
-		return resp, fmt.Errorf("Could not add log entry: %w", curTermErr)
-	}
-
-	if node.state != LEADER {
-		return resp, errors.New(fmt.Sprintf("Proxied log could not be processed because expected leader is not a leader. Its state is %s and term %d", node.state, curTerm))
-	}
-
-	// Make sure the term is set to the lead's current term
-	req.Entry.Term = curTerm
-
-	return resp, node.addLogEntry(
+	return resp, node.processLogEntryAsLeader(
 		stateMachineClient{
 			clientType: cluster,
 			address:    req.ForwardOutputToAddress,
@@ -57,6 +45,7 @@ func (s *proxyServer) ReceiveCommitOutput(ctx context.Context, req *ReceiveCommi
 	}
 
 	sendCommandErr := node.sendCommandOutputToClient(req.EntryID, req.Message, req.Success)
+	fmt.Errorf("Unable to send command output to client: %w", sendCommandErr)
 
 	return resp, sendCommandErr
 }
@@ -77,6 +66,9 @@ func (node *Node) forwardEntry(leaderAddr string, tcpClient Client, entry *LogEn
 		return addrErr
 	}
 
+	node.logEntryStates[entry.Id] = &logEntryState{
+		numberNodesWithEntry: 0,
+	}
 	regClientErr := node.registerStateMachineClient(
 		stateMachineClient{
 			clientType: tcp,

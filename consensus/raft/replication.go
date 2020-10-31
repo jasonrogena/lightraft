@@ -319,9 +319,11 @@ func (node *Node) commitUpToIndex(index int64) error {
 // addLogEntry inserts an entry into the log. The function is also responsible for saving the source address
 // in memory (if the current node is a leader)
 func (node *Node) addLogEntry(sourceAddress stateMachineClient, entry *LogEntry) error {
-	node.logEntryStates[entry.Id] = &logEntryState{
-		numberNodesWithEntry: 0,
+	_, logEntryStateExists := node.logEntryStates[entry.Id]
+	if !logEntryStateExists {
+		node.logEntryStates[entry.Id] = &logEntryState{}
 	}
+	node.logEntryStates[entry.Id].numberNodesWithEntry = 0
 
 	switch entry.Index {
 	case -1:

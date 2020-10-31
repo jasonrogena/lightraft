@@ -250,6 +250,7 @@ func (node *Node) getVotedFor() (string, error) {
 func (node *Node) RegisterGRPCHandlers(grpcServer *grpc.Server) {
 	RegisterElectionServiceServer(grpcServer, &electionServer{})
 	RegisterReplicationServiceServer(grpcServer, &replicationServer{})
+	RegisterProxyServiceServer(grpcServer, &proxyServer{})
 }
 
 // becomeLeader resets the node data for the leader to what is recommended when the leader is
@@ -345,27 +346,14 @@ func (node *Node) IngestCommand(client Client, command string) {
 
 	switch node.state {
 	case LEADER:
-		curTerm, curTermErr := node.getCurrentTerm()
-		if curTermErr != nil {
-			node.sendMessageToTCPClient(client, "", curTermErr)
-			return
-		}
-		entry.Term = curTerm
-
-		addEntryErr := node.addLogEntry(
+		processEntryErr := node.processLogEntryAsLeader(
 			stateMachineClient{
 				clientType: tcp,
 				address:    client,
 			},
 			entry)
-		if addEntryErr != nil {
-			node.sendMessageToTCPClient(client, "", addEntryErr)
-			return
-		}
-
-		sendEntryErr := node.sendEntriesToAllNodes([]*LogEntry{entry})
-		if sendEntryErr != nil {
-			node.sendMessageToTCPClient(client, "", sendEntryErr)
+		if processEntryErr != nil {
+			node.sendMessageToTCPClient(client, "", processEntryErr)
 			return
 		}
 	case FOLLOWER:
@@ -384,6 +372,31 @@ func (node *Node) IngestCommand(client Client, command string) {
 		node.sendMessageToTCPClient(client, "", fmt.Errorf("Node not in a state able to accept commands"))
 		return
 	}
+}
+
+// processLogEntryAsLeader acts on a log entry as if it were a leader
+func (node *Node) processLogEntryAsLeader(stateMachineClient stateMachineClient, entry *LogEntry) error {
+	if node.state != LEADER {
+		return fmt.Errorf("Log could not be processed because expected leader is not a leader. Its state is '%s'", node.state)
+	}
+
+	curTerm, curTermErr := node.getCurrentTerm()
+	if curTermErr != nil {
+		return curTermErr
+	}
+	entry.Term = curTerm
+
+	addEntryErr := node.addLogEntry(stateMachineClient, entry)
+	if addEntryErr != nil {
+		return addEntryErr
+	}
+
+	sendEntryErr := node.sendEntriesToAllNodes([]*LogEntry{entry})
+	if sendEntryErr != nil {
+		return sendEntryErr
+	}
+
+	return nil
 }
 
 func (node *Node) sendMessageToTCPClient(client Client, message string, err error) {
@@ -583,6 +596,9 @@ func (node *Node) sendCommandOutputToClient(entryID string, output string, succe
 		return fmt.Errorf("Could not connect to client to deliver response")
 	}
 
+	// At this point after the command output has been sent to the client,
+	// we have no need for the client
+	defer node.unsetLogEntryClient(entryID)
 	switch state.client.clientType {
 	case tcp:
 		tcpClient := state.client.address.(Client)
@@ -594,11 +610,24 @@ func (node *Node) sendCommandOutputToClient(entryID string, output string, succe
 
 		return nil
 	case cluster:
+		fmt.Printf("Sending back the following output to the cluster client \n %s", output)
 		forwardErr := node.forwardCommitOutput(state.client.address.(string), entryID, output, success)
 		return forwardErr
 	default:
-		return fmt.Errorf("Could not send back response to client because its type is unknown")
+		return fmt.Errorf("Could not send back response to client for log entry '%s' because its type '%v' is unknown", entryID, state.client.clientType)
 	}
+}
+
+func (node *Node) unsetLogEntryClient(entryID string) error {
+	_, stateOK := node.logEntryStates[entryID]
+
+	if !stateOK {
+		return fmt.Errorf("Could not connect to client to deliver response")
+	}
+
+	node.logEntryStates[entryID].client.clientType = 0
+
+	return nil
 }
 
 func (node *Node) isValueGreaterThanHalfNodes(value int) bool {
