@@ -6,6 +6,10 @@
 
 Wraps around SQLite and creates a distributed database. Lightraft uses the [Raft consensus algorithm](https://raft.github.io/) for distributed consensus. This is an experiment, don't use in prod.
 
+![Demo](./media/demo.gif)
+
+_Demo showing a cluster with three nodes with write queries being sent to the different nodes_
+
 ### Building Lightraft
 
 In order to build this project, you will need to install the following packages (make sure the executables are added to your PATH):
