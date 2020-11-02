@@ -18,7 +18,7 @@ reqs: ${GOPATH}/bin/protoc
 	go get github.com/golang/protobuf/protoc-gen-go@${PROTOC_GEN_GO_VERSION}
 
 grpcs: reqs clean
-	find . -name *.proto -print0 | xargs -I {} -0 bash -c 'protoc -I=`dirname {}` --go_out=plugins=grpc:`dirname {}` {}'
+	find . -name *.proto -print0 | xargs -I {} -0 sh -c 'protoc -I=`dirname {}` --go_out=plugins=grpc:`dirname {}` {}'
 
 lightraft: clean grpcs
 	go build
